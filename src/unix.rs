@@ -116,7 +116,9 @@ impl Checker {
     }
 
     pub fn ignore(&mut self, word: &str) {
-        let cstr = CString::new(word).unwrap();
+        let Ok(cstr) = CString::new(word) else {
+            return;
+        };
 
         unsafe {
             Hunspell_add(

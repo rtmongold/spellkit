@@ -4,6 +4,10 @@
 //! This corresponds to [`ISpellChecker`] on Windows, [`NSSpellChecker`] on MacOS, and [`hunspell`]
 //! on other *nix platforms.
 //!
+//! Spellkit does not bundle dictionaries or implement its own spelling algorithm.
+//! It wraps the platform backend and uses system / installed dictionaries.
+//! Behavior can differ across operating systems where the underlying APIs differ.
+//!
 //! # Example
 //!
 //! ```
@@ -25,7 +29,8 @@ use std::fmt;
 
 #[derive(Debug)]
 pub enum Error {
-    /// No usable dictionary /backend (e.g. missing hunspell files on Linux).
+    /// No usable spell checker (e.g. missing Hunspell files on Linux, COM/create
+    /// failure on Windows, or an empty locale on macOS).
     Unavailable,
 }
 
@@ -79,18 +84,31 @@ cfg_if! {
 pub struct Checker(imp::Checker);
 
 impl Checker {
-    /// Create an instance of the system spell checker.
+    /// Create a checker with a platform default locale.
+    ///
+    /// - **Linux:** first available of `en_US`, then `en_GB` under the Hunspell directories.
+    /// - **macOS:** the system default language
+    /// - **Windows:** `en-US`
     pub fn new() -> Result<Self, Error> {
         Ok(Checker(imp::Checker::new()?))
     }
 
     /// Create a checker for a specific locale (`en_US` or `en-US` both work).
+    ///
+    /// Unknown or unsupported locales behave differently by platform:
+    ///
+    /// - **Linux:** missing dictionary → [`Error::Unavailable`]
+    /// - **macOS:** empty locale → [`Error::Unavailable`]; unknown tags may still
+    ///   succeed (system fallback)
+    /// - **Windows:** unsupported language tag → [`Error::Unavailable`]
     pub fn with_locale(locale: &str) -> Result<Self, Error> {
         let (hunspell, bcp47) = normalize_locale(locale);
         Ok(Checker(imp::Checker::with_locale(&hunspell, &bcp47)?))
     }
 
-    /// Spelling suggestions for `word` (may be empty).
+    /// Spelling suggestions for `word`.
+    ///
+    /// Returns at most 10 suggestions, or an empty list if none are available.
     pub fn suggest(&self, word: &str) -> Vec<String> {
         self.0.suggest(word)
     }
@@ -121,9 +139,13 @@ impl SpellingError {
     pub fn text(&self) -> &str {
         self.0.text()
     }
+    /// Inclusive start index of the misspelling, as a UTF-8 byte offset into the
+    /// original text. `&text[start()..end()]` is the misspelled word.
     pub fn start(&self) -> usize {
         self.0.start()
     }
+    /// Exclusive end index of the misspelling, as a UTF-8 byte offset into the
+    /// original text. `&text[start()..end()]` is the misspelled word.
     pub fn end(&self) -> usize {
         self.0.end()
     }

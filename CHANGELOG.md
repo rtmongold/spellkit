@@ -6,6 +6,13 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Document platform defaults for `Checker::new()`, locale failure, suggestions cap, and UTF-8 error ranges in rustdoc
+- README now states that macOS `Checker::new()` uses the system language
+
+### Fixed
+- Linux `ignore` no longer panics when the word contains an interior NUL
+
 ## [0.3.0] - 2026-08-07
 
 ### Breaking
@@ -50,7 +57,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 - Edition 2021; dropped `lazy_static` / `extern crate`
-- macOS uses `OnceLock` for the shared `NSSpellChecker`
+- macOS serializes access to the shared `NSSpellChecker` with a `Mutex`
 - Windows COM failures map to `Error` where creating the checker; UTF-16
   indices convert to UTF-8 byte ranges
 - `hunspell-sys` 0.1.3 → 0.3.1 on Linux
