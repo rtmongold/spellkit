@@ -1,6 +1,9 @@
 # spellkit
 
+[![On crates.io](https://img.shields.io/crates/v/spellkit.svg)](https://crates.io/crates/spellkit)
+![Downloads](https://img.shields.io/crates/d/spellkit?style=flat-square)
 [![CI](https://github.com/rtmongold/spellkit/actions/workflows/ci.yml/badge.svg)](https://github.com/rtmongold/spellkit/actions/workflows/ci.yml)
+[![Docs](https://docs.rs/spellkit/badge.svg)](https://docs.rs/spellkit)
 
 Native spell checking with a small Rust API.
 
@@ -36,7 +39,7 @@ fn main() -> Result<(), spellkit::Error> {
 }
 ```
 
-`Checker::new()` defaults to English (`en_US` / `en_GB` on Linux, `en-US` on Windows). Use `with_locale` for another language. Locales may be written as `en_US` or `en-US`.
+`Checker::new()` uses a platform default: system language on macOS, `en-US` on Windows, and the first available of `en_US` / `en_GB` on Linux. Use `with_locale` for another language.
 
 Unknown or unsupported locales behave differently by platform:
 
