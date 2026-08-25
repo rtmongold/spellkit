@@ -13,7 +13,7 @@
 //! ```
 //! use spellkit::Checker;
 //!
-//! let mut checker = Checker::new().unwrap();
+//! let checker = Checker::new().unwrap();
 //!
 //! let errors: Vec<_> = checker.check("I beleeve I can fly").collect();
 //!
@@ -32,21 +32,38 @@
 use cfg_if::cfg_if;
 use std::fmt;
 use std::marker::PhantomData;
+use std::ops::Range;
+use std::path::PathBuf;
 
-#[derive(Debug)]
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
-    /// Recoverable spell-checker setup failure.
-    ///
-    /// A single variant on purpose: Linux, macOS, and Windows cannot report the same
-    /// failure details. Missing Hunspell files, an unsupported Windows language tag,
-    /// and an empty macOS locale all become [`Error::Unavailable`].
-    Unavailable,
+    InvalidLocale,
+    UnsupportedLocale {
+        locale: String,
+    },
+    DictionaryNotFound {
+        locale: String,
+        searched: Vec<PathBuf>,
+    },
+    InitializationFailed {
+        locale: Option<String>,
+        message: String,
+    },
 }
 
 impl fmt::Display for Error {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            Error::Unavailable => write!(f, "spell checker unavailable"),
+            Error::InvalidLocale => write!(f, "invalid locale"),
+            Error::UnsupportedLocale { locale } => write!(f, "unsupported locale: {locale}"),
+            Error::DictionaryNotFound { locale, searched } => write!(
+                f,
+                "dictionary not found for locale: {locale}, searched: {searched:?}"
+            ),
+            Error::InitializationFailed { locale, message } => write!(
+                f,
+                "initialization failed for locale: {locale:?}, message: {message}"
+            ),
         }
     }
 }
@@ -107,14 +124,17 @@ impl Checker {
 
     /// Create a checker for a specific locale (`en_US` or `en-US` both work).
     ///
-    /// Unknown or unsupported locales behave differently by platform:
-    ///
-    /// - **Linux:** missing dictionary → [`Error::Unavailable`]
-    /// - **macOS:** empty locale → [`Error::Unavailable`]; unknown tags may still
-    ///   succeed (system fallback)
-    /// - **Windows:** unsupported language tag → [`Error::Unavailable`]
+    /// - empty string - [`Error::InvalidLocale`]
+    /// - **Linux:** missing `.aff` / `.dic` → [`Error::DictionaryNotFound`]
+    /// - **macOS / Windows:** language not installed → [`Error::UnsupportedLocale`]
     pub fn with_locale(locale: &str) -> Result<Self, Error> {
+        if locale.trim().is_empty() {
+            return Err(Error::InvalidLocale);
+        }
         let (hunspell, bcp47) = normalize_locale(locale);
+        if hunspell.is_empty() {
+            return Err(Error::InvalidLocale);
+        }
         Ok(Checker(
             imp::Checker::with_locale(&hunspell, &bcp47)?,
             PhantomData,
@@ -148,6 +168,14 @@ impl Checker {
     pub fn ignore(&mut self, word: &str) {
         self.0.ignore(word)
     }
+
+    pub fn locale(&self) -> &str {
+        self.0.locale()
+    }
+
+    pub fn available_locales() -> Vec<String> {
+        imp::Checker::available_locales()
+    }
 }
 
 /// A spelling error.
@@ -168,11 +196,21 @@ impl SpellingError {
     pub fn end(&self) -> usize {
         self.0.end()
     }
+
+    pub fn range(&self) -> Range<usize> {
+        self.start()..self.end()
+    }
+}
+
+impl fmt::Display for SpellingError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "{} @ {}..{}", self.text(), self.start(), self.end())
+    }
 }
 
 #[cfg(test)]
 mod tests {
-    use super::Checker;
+    use super::{Checker, Error};
 
     #[test]
     fn no_errors() {
@@ -245,9 +283,101 @@ mod tests {
     }
 
     #[test]
+    fn with_locale_empty() {
+        assert!(matches!(
+            Checker::with_locale(""),
+            Err(Error::InvalidLocale)
+        ));
+    }
+
+    #[test]
     #[cfg(all(unix, not(target_os = "macos")))]
     fn with_locale_unknown() {
-        assert!(Checker::with_locale("zz_ZZ").is_err());
+        match Checker::with_locale("zz_ZZ") {
+            Err(Error::DictionaryNotFound { locale, searched }) => {
+                assert!(locale.contains("zz"));
+                assert!(!searched.is_empty());
+            }
+            other => panic!("expected DictionaryNotFound, got {other:?}"),
+        }
+    }
+
+    #[test]
+    #[cfg(any(windows, target_os = "macos"))]
+    fn with_locale_unknown() {
+        match Checker::with_locale("zz_ZZ") {
+            Err(Error::UnsupportedLocale { locale }) => {
+                assert!(locale.to_lowercase().contains("zz"));
+            }
+            other => panic!("expected UnsupportedLocale, got {other:?}"),
+        }
+    }
+
+    #[cfg(all(unix, not(target_os = "macos")))]
+    fn unix_locale_or_skip(locales: &[&str]) -> Option<Checker> {
+        for tag in locales {
+            match Checker::with_locale(tag) {
+                Ok(c) => return Some(c),
+                Err(Error::DictionaryNotFound { .. }) => continue,
+                Err(e) => panic!("{e}"),
+            }
+        }
+        if std::env::var_os("CI").is_some() {
+            panic!("missing Hunspell dicts for {locales:?} (CI must install them)");
+        }
+        None
+    }
+
+    #[test]
+    #[cfg(all(unix, not(target_os = "macos")))]
+    fn hunspell_de_de() {
+        let Some(checker) = unix_locale_or_skip(&["de_DE", "de"]) else {
+            return;
+        };
+        assert!(checker.is_correct("Haus"));
+        assert!(!checker.is_correct("Hauzz"));
+        assert!(!checker.suggest("Hauzz").is_empty());
+    }
+
+    #[test]
+    #[cfg(all(unix, not(target_os = "macos")))]
+    fn hunspell_fr() {
+        let Some(checker) = unix_locale_or_skip(&["fr_FR", "fr"]) else {
+            return;
+        };
+        assert!(checker.is_correct("bonjour"));
+        assert!(!checker.is_correct("bonjoour"));
+        assert!(!checker.suggest("bonjoour").is_empty());
+    }
+
+    #[test]
+    fn utf8_range() {
+        let text = "café beleeve";
+        let checker = Checker::with_locale("en_US").unwrap();
+        let errors: Vec<_> = checker.check(text).collect();
+        let e = errors
+            .iter()
+            .find(|e| e.text() == "beleeve")
+            .unwrap_or_else(|| {
+                panic!(
+                    "expected beleeve, got {:?}",
+                    errors.iter().map(|e| e.text()).collect::<Vec<_>>()
+                )
+            });
+        assert_eq!(&text[e.start()..e.end()], "beleeve");
+        assert_eq!(e.range(), e.start()..e.end());
+        assert!(e.start() > 0);
+    }
+
+    #[test]
+    fn locale_en() {
+        let checker = Checker::with_locale("en_US").unwrap();
+        assert!(checker.locale().to_lowercase().contains("en"));
+    }
+
+    #[test]
+    fn available_locales_nonempty() {
+        assert!(!Checker::available_locales().is_empty());
     }
 
     #[test]

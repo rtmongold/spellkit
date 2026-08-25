@@ -1,7 +1,7 @@
 [package]
 name = "spellkit"
-description = "Bindings to your friendly neighborhood spellchecker."
-keywords = ["spellcheck", "spellchecker", "hunspell"]
+description = "Cross-platform native spell checking for Rust (NSSpellChecker, Windows Spell Checker, Hunspell)."
+keywords = ["spellcheck", "spellchecker", "hunspell", "nsspellchecker"]
 categories = ["os", "text-processing"]
 documentation = "https://docs.rs/spellkit"
 repository = "https://github.com/rtmongold/spellkit"

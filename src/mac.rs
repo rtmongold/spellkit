@@ -18,8 +18,19 @@ fn ns_string(s: &str) -> Retained<NSString> {
     NSString::from_str(s)
 }
 
-fn language_ref(language: &Option<String>) -> Option<Retained<NSString>> {
-    language.as_ref().map(|tag| ns_string(tag))
+fn language_ref(language: &str) -> Retained<NSString> {
+    ns_string(language)
+}
+
+fn mac_locale_supported(requested_bcp47: &str, available: &str) -> bool {
+    let want = requested_bcp47.replace('_', "-");
+    let have = available.replace('_', "-");
+    if want.eq_ignore_ascii_case(&have) {
+        return true;
+    }
+    let want_lang = want.split('-').next().unwrap_or("");
+    let have_parts: Vec<_> = have.split('-').collect();
+    have_parts.len() == 1 && have_parts[0].eq_ignore_ascii_case(want_lang)
 }
 
 fn nsarray_to_strings(
@@ -51,8 +62,7 @@ fn utf16_offset_to_utf8(s: &str, utf16_units: usize) -> usize {
 #[derive(Debug)]
 pub struct Checker {
     document_tag: NSInteger,
-    /// BCP-47 tag (`en-US`), or `None` for the system default language.
-    language: Option<String>,
+    language: String,
 }
 
 impl Drop for Checker {
@@ -64,21 +74,45 @@ impl Drop for Checker {
 
 impl Checker {
     pub fn new() -> Result<Self, Error> {
+        let language = with_checker(|c| c.language().to_string());
+        if language.is_empty() {
+            return Err(Error::InitializationFailed {
+                locale: None,
+                message: "NSSpellChecker.language is empty".into(),
+            });
+        }
         Ok(Self {
             document_tag: NSSpellChecker::uniqueSpellDocumentTag(),
-            language: None,
+            language,
         })
     }
 
     pub fn with_locale(_hunspell: &str, bcp47: &str) -> Result<Self, Error> {
         if bcp47.is_empty() {
-            return Err(Error::Unavailable);
+            return Err(Error::InvalidLocale);
+        }
+        let available =
+            with_checker(|c| nsarray_to_strings(Some(c.availableLanguages().as_ref()), usize::MAX));
+        let ok = available.iter().any(|t| mac_locale_supported(bcp47, t));
+        if !ok {
+            return Err(Error::UnsupportedLocale {
+                locale: bcp47.to_owned(),
+            });
         }
         Ok(Self {
             document_tag: NSSpellChecker::uniqueSpellDocumentTag(),
-            language: Some(bcp47.to_owned()),
+            language: bcp47.to_owned(),
         })
     }
+
+    pub fn locale(&self) -> &str {
+        &self.language
+    }
+
+    pub fn available_locales() -> Vec<String> {
+        with_checker(|c| nsarray_to_strings(Some(c.availableLanguages().as_ref()), usize::MAX))
+    }
+
     pub fn suggest(&self, word: &str) -> Vec<String> {
         const MAX: usize = 10;
         if word.is_empty() {
@@ -97,7 +131,7 @@ impl Checker {
             c.guessesForWordRange_inString_language_inSpellDocumentWithTag(
                 range,
                 &ns_word,
-                lang.as_deref(),
+                Some(&*lang),
                 tag,
             )
         });
@@ -145,7 +179,7 @@ struct SpellcheckIter {
     ns_text: Retained<NSString>,
     ns_offset: usize,
     original: String,
-    language: Option<String>,
+    language: String,
 }
 
 impl Iterator for SpellcheckIter {
@@ -161,7 +195,7 @@ impl Iterator for SpellcheckIter {
             c.checkSpellingOfString_startingAt_language_wrap_inSpellDocumentWithTag_wordCount(
                 &ns_text,
                 starting,
-                lang.as_deref(),
+                Some(&*lang),
                 false,
                 tag,
                 ptr::null_mut(),

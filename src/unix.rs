@@ -19,33 +19,67 @@ const DICT_DIRS: &[&str] = &[
 
 const DEFAULT_LOCALES: &[&str] = &["en_US", "en_GB"];
 
-fn find_dictionary(locales: &[&str]) -> Option<(PathBuf, PathBuf)> {
+fn dict_search_dirs() -> Vec<PathBuf> {
+    let mut dirs = Vec::new();
+    if let Ok(dicpath) = std::env::var("DICPATH") {
+        for part in dicpath.split(':') {
+            if !part.is_empty() {
+                dirs.push(PathBuf::from(part));
+            }
+        }
+    }
     for dir in DICT_DIRS {
+        dirs.push(PathBuf::from(dir));
+    }
+    dirs
+}
+
+fn find_dictionary(dirs: &[PathBuf], locales: &[&str]) -> Option<(PathBuf, PathBuf, String)> {
+    for dir in dirs {
         for locale in locales {
             let aff = Path::new(dir).join(format!("{locale}.aff"));
             let dic = Path::new(dir).join(format!("{locale}.dic"));
             if aff.is_file() && dic.is_file() {
-                return Some((aff, dic));
+                return Some((aff, dic, (*locale).to_owned()));
             }
         }
     }
     None
 }
 
-fn open_dictionary(locales: &[&str]) -> Result<*mut Hunhandle, Error> {
-    let (aff, dic) = find_dictionary(locales).ok_or(Error::Unavailable)?;
-    let aff_c = CString::new(aff.as_os_str().as_bytes()).map_err(|_| Error::Unavailable)?;
-    let dic_c = CString::new(dic.as_os_str().as_bytes()).map_err(|_| Error::Unavailable)?;
+fn open_dictionary(locales: &[&str]) -> Result<(*mut Hunhandle, String), Error> {
+    let dirs = dict_search_dirs();
+    let Some((aff, dic, locale)) = find_dictionary(&dirs, locales) else {
+        return Err(Error::DictionaryNotFound {
+            locale: locales.join(","),
+            searched: dirs,
+        });
+    };
+    let label = Some(locale.clone());
+    let aff_c =
+        CString::new(aff.as_os_str().as_bytes()).map_err(|_| Error::InitializationFailed {
+            locale: label.clone(),
+            message: "dictionary path contains NUL".into(),
+        })?;
+    let dic_c =
+        CString::new(dic.as_os_str().as_bytes()).map_err(|_| Error::InitializationFailed {
+            locale: label.clone(),
+            message: "dictionary path contains NUL".into(),
+        })?;
     let hunspell = unsafe { Hunspell_create(aff_c.as_ptr(), dic_c.as_ptr()) };
     if hunspell.is_null() {
-        return Err(Error::Unavailable);
+        return Err(Error::InitializationFailed {
+            locale: label.clone(),
+            message: "Hunspell_create returned null".into(),
+        });
     }
-    Ok(hunspell)
+    Ok((hunspell, locale))
 }
 
 #[derive(Debug)]
 pub struct Checker {
     hunspell: *mut Hunhandle,
+    locale: String,
 }
 
 fn env_locale() -> Option<String> {
@@ -69,24 +103,47 @@ fn env_locale() -> Option<String> {
 impl Checker {
     pub fn new() -> Result<Self, Error> {
         if let Some(loc) = env_locale() {
-            if let Ok(hunspell) = open_dictionary(&[&loc]) {
-                return Ok(Checker { hunspell });
+            if let Ok((hunspell, locale)) = open_dictionary(&[&loc]) {
+                return Ok(Checker { hunspell, locale });
             }
             if let Some((lang, _)) = loc.split_once('_') {
-                if let Ok(hunspell) = open_dictionary(&[lang]) {
-                    return Ok(Checker { hunspell });
+                if let Ok((hunspell, locale)) = open_dictionary(&[lang]) {
+                    return Ok(Checker { hunspell, locale });
                 }
             }
         }
-        Ok(Checker {
-            hunspell: open_dictionary(DEFAULT_LOCALES)?,
-        })
+        let (hunspell, locale) = open_dictionary(DEFAULT_LOCALES)?;
+        Ok(Checker { hunspell, locale })
     }
 
     pub fn with_locale(hunspell_locale: &str, _bcp47: &str) -> Result<Self, Error> {
-        Ok(Checker {
-            hunspell: open_dictionary(&[hunspell_locale])?,
-        })
+        let (hunspell, locale) = open_dictionary(&[hunspell_locale])?;
+        Ok(Checker { hunspell, locale })
+    }
+
+    pub fn locale(&self) -> &str {
+        &self.locale
+    }
+
+    pub fn available_locales() -> Vec<String> {
+        let mut out = Vec::new();
+        for dir in dict_search_dirs() {
+            let Ok(entries) = std::fs::read_dir(&dir) else {
+                continue;
+            };
+            for ent in entries.flatten() {
+                let path = ent.path();
+                if path.extension().and_then(|e| e.to_str()) != Some("dic") {
+                    continue;
+                }
+                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
+                    out.push(stem.to_owned());
+                }
+            }
+        }
+        out.sort();
+        out.dedup();
+        out
     }
 
     pub fn suggest(&self, word: &str) -> Vec<String> {
