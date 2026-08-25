@@ -53,6 +53,15 @@ pub struct Checker {
 
 impl Checker {
     pub fn new() -> Result<Self, Error> {
+        let mut buf = [0u16; 85];
+        let n = unsafe { windows::Win32::Globalization::GetUserDefaultLocaleName(&mut buf) };
+        if n > 1 {
+            if let Ok(tag) = String::from_utf16(&buf[..n as usize - 1]) {
+                if let Ok(checker) = open_for_language(&tag) {
+                    return Ok(Checker { checker });
+                }
+            }
+        }
         Self::with_locale("en_US", "en-US")
     }
 

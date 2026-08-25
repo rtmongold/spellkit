@@ -9,6 +9,8 @@ This project follows [Semantic Versioning](https://semver.org/).
 ### Changed
 - Document platform defaults for `Checker::new()`, locale failure, suggestions cap, and UTF-8 error ranges in rustdoc
 - README now states that macOS `Checker::new()` uses the system language
+- `Checker` is no longer `Send`/`Sync`
+- `Checker::new()` uses the environment/user locale on Linux and Windows when possible
 
 ### Fixed
 - Linux `ignore` no longer panics when the word contains an interior NUL
