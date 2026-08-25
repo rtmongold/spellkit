@@ -6,6 +6,12 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Breaking
+- `Error` is now `InvalidLocale` / `UnsupportedLocale` / `DictionaryNotFound` / `InitializationFailed` (removed `Unavailable`)
+- macOS `with_locale` returns `UnsupportedLocale` if the language is not installed
+- Added `Checker::locale` and `Checker::available_locales`
+- Removed the crate binary (`src/main.rs`); use `examples/`
+
 ### Changed
 - Document platform defaults for `Checker::new()`, locale failure, suggestions cap, and UTF-8 error ranges in rustdoc
 - README now states that macOS `Checker::new()` uses the system language

@@ -35,20 +35,73 @@ fn utf16_offset_to_utf8(s: &str, utf16_units: usize) -> usize {
 }
 
 fn open_for_language(bcp47: &str) -> Result<ISpellChecker, Error> {
-    // S_OK / S_FALSE (already initialized) both succeed via windows::Result
+    if bcp47.is_empty() {
+        return Err(Error::InvalidLocale);
+    }
     let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
 
     let factory: ISpellCheckerFactory =
-        unsafe { CoCreateInstance(&SpellCheckerFactory, None, CLSCTX_INPROC_SERVER) }
-            .map_err(|_| Error::Unavailable)?;
+        unsafe { CoCreateInstance(&SpellCheckerFactory, None, CLSCTX_INPROC_SERVER) }.map_err(
+            |e| Error::InitializationFailed {
+                locale: Some(bcp47.to_owned()),
+                message: e.to_string(),
+            },
+        )?;
 
     let tag = HSTRING::from(bcp47);
-    unsafe { factory.CreateSpellChecker(&tag) }.map_err(|_| Error::Unavailable)
+    let supported =
+        unsafe { factory.IsSupported(&tag) }.map_err(|e| Error::InitializationFailed {
+            locale: Some(bcp47.to_owned()),
+            message: e.to_string(),
+        })?;
+    if !supported.as_bool() {
+        return Err(Error::UnsupportedLocale {
+            locale: bcp47.to_owned(),
+        });
+    }
+    unsafe { factory.CreateSpellChecker(&tag) }.map_err(|e| Error::InitializationFailed {
+        locale: Some(bcp47.to_owned()),
+        message: e.to_string(),
+    })
+}
+
+fn supported_language_tags() -> Vec<String> {
+    let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+    let factory: ISpellCheckerFactory =
+        match unsafe { CoCreateInstance(&SpellCheckerFactory, None, CLSCTX_INPROC_SERVER) } {
+            Ok(f) => f,
+            Err(_) => return Vec::new(),
+        };
+    let Ok(enum_str) = (unsafe { factory.SupportedLanguages() }) else {
+        return Vec::new();
+    };
+    let mut out = Vec::new();
+    loop {
+        let mut item = [PWSTR::null()];
+        let mut fetched = 0u32;
+        let hr = unsafe { enum_str.Next(&mut item, Some(&mut fetched)) };
+        if fetched == 0 || item[0].is_null() {
+            break;
+        }
+        if let Ok(s) = unsafe { item[0].to_string() } {
+            out.push(s);
+        }
+        unsafe {
+            CoTaskMemFree(Some(item[0].as_ptr() as *const _));
+        }
+        if hr.is_err() && hr != S_FALSE {
+            break;
+        }
+    }
+    out.sort();
+    out.dedup();
+    out
 }
 
 #[derive(Debug)]
 pub struct Checker {
     checker: ISpellChecker,
+    locale: String,
 }
 
 impl Checker {
@@ -58,7 +111,10 @@ impl Checker {
         if n > 1 {
             if let Ok(tag) = String::from_utf16(&buf[..n as usize - 1]) {
                 if let Ok(checker) = open_for_language(&tag) {
-                    return Ok(Checker { checker });
+                    return Ok(Checker {
+                        checker,
+                        locale: tag,
+                    });
                 }
             }
         }
@@ -68,7 +124,16 @@ impl Checker {
     pub fn with_locale(_hunspell: &str, bcp47: &str) -> Result<Self, Error> {
         Ok(Checker {
             checker: open_for_language(bcp47)?,
+            locale: bcp47.to_owned(),
         })
+    }
+
+    pub fn locale(&self) -> &str {
+        &self.locale
+    }
+
+    pub fn available_locales() -> Vec<String> {
+        supported_language_tags()
     }
 
     pub fn suggest(&self, word: &str) -> Vec<String> {
