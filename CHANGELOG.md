@@ -6,6 +6,8 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.0] - 2026-08-25
+
 ### Breaking
 - `Error` is now `InvalidLocale` / `UnsupportedLocale` / `DictionaryNotFound` / `InitializationFailed` (removed `Unavailable`)
 - macOS `with_locale` returns `UnsupportedLocale` if the language is not installed
