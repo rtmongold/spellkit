@@ -13,6 +13,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 - Removed the crate binary (`src/main.rs`); use `examples/`
 
 ### Changed
+- Crate-level rustdoc and docs on `Error`, `locale`, `available_locales`, and `range`
 - Document platform defaults for `Checker::new()`, locale failure, suggestions cap, and UTF-8 error ranges in rustdoc
 - README now states that macOS `Checker::new()` uses the system language
 - `Checker` is no longer `Send`/`Sync`

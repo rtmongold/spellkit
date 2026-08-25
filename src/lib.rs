@@ -1,12 +1,10 @@
-//! `spellkit` is a small crate that binds to the native platform's spell checking APIs and
-//! provides a friendlier API.
-//!
-//! This corresponds to [`ISpellChecker`] on Windows, [`NSSpellChecker`] on MacOS, and [`hunspell`]
-//! on other *nix platforms.
+//! Cross-platform native spell checking: [`NSSpellChecker`] on macOS, [`ISpellChecker`]
+//! on Windows, and [`hunspell`] with system dictionaries on other Unix.
 //!
 //! Spellkit does not bundle dictionaries or implement its own spelling algorithm.
-//! It wraps the platform backend and uses system / installed dictionaries.
-//! Behavior can differ across operating systems where the underlying APIs differ.
+//! Use it when you want OS dictionaries and a small API; use a crate like Spellbook
+//! when you want a portable engine and app-shipped word lists.
+//! Behavior can differ across operating systems where the backends differ.
 //!
 //! # Example
 //!
@@ -35,16 +33,26 @@ use std::marker::PhantomData;
 use std::ops::Range;
 use std::path::PathBuf;
 
+/// Failure creating a [`Checker`].
+///
+/// Match on this instead of a single “unavailable” flag: Linux can report missing
+/// Hunspell files, while macOS and Windows report an unsupported language tag.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
+    /// The locale string was empty or could not be normalized.
     InvalidLocale,
-    UnsupportedLocale {
-        locale: String,
-    },
+    /// The OS has no spell checker for this language (macOS / Windows).
+    UnsupportedLocale { locale: String },
+    /// No Hunspell `.aff` / `.dic` pair was found (Linux / other Unix).
+    ///
+    /// `searched` is the directory list that was walked (`DICPATH` then the
+    /// built-in system paths).
     DictionaryNotFound {
         locale: String,
         searched: Vec<PathBuf>,
     },
+    /// The backend started but failed (null Hunspell handle, COM factory, empty
+    /// macOS system language).
     InitializationFailed {
         locale: Option<String>,
         message: String,
@@ -108,6 +116,7 @@ cfg_if! {
 /// Instance of the system spell checker.
 ///
 /// `Checker` is not `Send` or `Sync`. Do not share it across threads.
+/// macOS also serializes access to the shared `NSSpellChecker`.
 #[derive(Debug)]
 pub struct Checker(imp::Checker, PhantomData<*const ()>);
 
@@ -169,10 +178,18 @@ impl Checker {
         self.0.ignore(word)
     }
 
+    /// Language tag this checker is using (Hunspell `en_US` or BCP-47 `en-US`).
+    ///
+    /// After [`Checker::new`] this is the locale that was actually selected, not
+    /// a placeholder for “system default.”
     pub fn locale(&self) -> &str {
         self.0.locale()
     }
 
+    /// Locales the OS can check.
+    ///
+    /// Linux: Hunspell `*.dic` stems on `DICPATH` and the system dict dirs.
+    /// macOS: `NSSpellChecker` available languages. Windows: `SupportedLanguages`.
     pub fn available_locales() -> Vec<String> {
         imp::Checker::available_locales()
     }
@@ -197,6 +214,7 @@ impl SpellingError {
         self.0.end()
     }
 
+    /// UTF-8 byte range of the misspelling: `start()..end()`.
     pub fn range(&self) -> Range<usize> {
         self.start()..self.end()
     }

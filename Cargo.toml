@@ -4,6 +4,7 @@ description = "Cross-platform native spell checking for Rust (NSSpellChecker, Wi
 keywords = ["spellcheck", "spellchecker", "hunspell", "nsspellchecker"]
 categories = ["os", "text-processing"]
 documentation = "https://docs.rs/spellkit"
+homepage = "https://github.com/rtmongold/spellkit"
 repository = "https://github.com/rtmongold/spellkit"
 version = "0.3.0"
 authors = [
