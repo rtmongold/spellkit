@@ -21,16 +21,25 @@
 //! assert_eq!(errors[0].text(), "beleeve");
 //! ```
 //!
+//! ```compile_fail
+//! fn needs_send<T: Send>() {}
+//! needs_send::<spellkit::Checker>();
+//! ```
+//!
 //! [`ISpellChecker`]: https://docs.microsoft.com/en-us/windows/desktop/api/spellcheck/nn-spellcheck-ispellchecker
 //! [`NSSpellChecker`]: https://developer.apple.com/documentation/appkit/nsspellchecker
 //! [`hunspell`]: https://hunspell.github.io/
 use cfg_if::cfg_if;
 use std::fmt;
+use std::marker::PhantomData;
 
 #[derive(Debug)]
 pub enum Error {
-    /// No usable spell checker (e.g. missing Hunspell files on Linux, COM/create
-    /// failure on Windows, or an empty locale on macOS).
+    /// Recoverable spell-checker setup failure.
+    ///
+    /// A single variant on purpose: Linux, macOS, and Windows cannot report the same
+    /// failure details. Missing Hunspell files, an unsupported Windows language tag,
+    /// and an empty macOS locale all become [`Error::Unavailable`].
     Unavailable,
 }
 
@@ -80,17 +89,20 @@ cfg_if! {
 }
 
 /// Instance of the system spell checker.
+///
+/// `Checker` is not `Send` or `Sync`. Do not share it across threads.
 #[derive(Debug)]
-pub struct Checker(imp::Checker);
+pub struct Checker(imp::Checker, PhantomData<*const ()>);
 
 impl Checker {
     /// Create a checker with a platform default locale.
     ///
-    /// - **Linux:** first available of `en_US`, then `en_GB` under the Hunspell directories.
+    /// - **Linux:** `LC_ALL` / `LC_MESSAGES` / `LANG` if a Hunspell dictionary exists,
+    ///   otherwise `en_US` / `en_GB`.
     /// - **macOS:** the system default language
-    /// - **Windows:** `en-US`
+    /// - **Windows:** the user locale if the OS has a checker, otherwise `en-US`
     pub fn new() -> Result<Self, Error> {
-        Ok(Checker(imp::Checker::new()?))
+        Ok(Checker(imp::Checker::new()?, PhantomData))
     }
 
     /// Create a checker for a specific locale (`en_US` or `en-US` both work).
@@ -103,7 +115,10 @@ impl Checker {
     /// - **Windows:** unsupported language tag → [`Error::Unavailable`]
     pub fn with_locale(locale: &str) -> Result<Self, Error> {
         let (hunspell, bcp47) = normalize_locale(locale);
-        Ok(Checker(imp::Checker::with_locale(&hunspell, &bcp47)?))
+        Ok(Checker(
+            imp::Checker::with_locale(&hunspell, &bcp47)?,
+            PhantomData,
+        ))
     }
 
     /// Spelling suggestions for `word`.
@@ -113,7 +128,11 @@ impl Checker {
         self.0.suggest(word)
     }
 
-    /// Check a text for spelling errors. Returns an iterator over the errors present in the text.
+    /// Check `text` for spelling errors.
+    ///
+    /// Ranges are UTF-8 byte offsets. Linux tokenizes words itself (alphanumeric
+    /// and `'`). macOS and Windows use the OS spell-checking APIs, so word breaks
+    /// may differ.
     pub fn check<'a>(&self, text: &'a str) -> impl Iterator<Item = SpellingError> + 'a + use<'a> {
         self.0.check(text).map(SpellingError)
     }
@@ -158,14 +177,14 @@ mod tests {
     #[test]
     fn no_errors() {
         let text = "I'm happy that this sentence has no errors.";
-        let checker = Checker::new().unwrap();
+        let checker = Checker::with_locale("en_US").unwrap();
         assert_eq!(checker.check(text).count(), 0);
     }
 
     #[test]
     fn single_error() {
         let text = "beleeve";
-        let checker = Checker::new().unwrap();
+        let checker = Checker::with_locale("en_US").unwrap();
         let errors = checker.check(text).collect::<Vec<_>>();
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].text(), "beleeve");
@@ -175,7 +194,7 @@ mod tests {
     #[test]
     fn multiple_errors() {
         let text = "asdf hjkl qwer uiop";
-        let checker = Checker::new().unwrap();
+        let checker = Checker::with_locale("en_US").unwrap();
         let errors = checker.check(text).collect::<Vec<_>>();
         assert_eq!(errors.len(), 4);
         assert_eq!(errors[0].text(), "asdf");
@@ -187,7 +206,7 @@ mod tests {
     #[test]
     fn error_ranges() {
         let text = "one asdf two";
-        let checker = Checker::new().unwrap();
+        let checker = Checker::with_locale("en_US").unwrap();
         let errors: Vec<_> = checker.check(text).collect();
         assert_eq!(errors.len(), 1);
         assert_eq!(errors[0].text(), "asdf");
@@ -198,13 +217,13 @@ mod tests {
 
     #[test]
     fn empty() {
-        let checker = Checker::new().unwrap();
+        let checker = Checker::with_locale("en_US").unwrap();
         assert_eq!(checker.check("").count(), 0);
     }
 
     #[test]
     fn ignore() {
-        let mut checker = Checker::new().unwrap();
+        let mut checker = Checker::with_locale("en_US").unwrap();
         assert_eq!(checker.check("foobarbaz").count(), 1);
         checker.ignore("foobarbaz");
         assert_eq!(checker.check("foobarbaz").count(), 0);
@@ -212,10 +231,10 @@ mod tests {
 
     #[test]
     fn ignore_not_permanent() {
-        let mut checker = Checker::new().unwrap();
+        let mut checker = Checker::with_locale("en_US").unwrap();
         checker.ignore("foobarbaz");
         drop(checker);
-        let checker = Checker::new().unwrap();
+        let checker = Checker::with_locale("en_US").unwrap();
         assert_eq!(checker.check("foobarbaz").count(), 1);
     }
 
@@ -233,15 +252,26 @@ mod tests {
 
     #[test]
     fn suggest_misspelling() {
-        let checker = Checker::new().unwrap();
+        let checker = Checker::with_locale("en_US").unwrap();
         let suggestions = checker.suggest("beleeve");
         assert!(!suggestions.is_empty());
     }
 
     #[test]
     fn is_correct() {
-        let checker = Checker::new().unwrap();
+        let checker = Checker::with_locale("en_US").unwrap();
         assert!(checker.is_correct("believe"));
         assert!(!checker.is_correct("beleeve"));
+    }
+
+    #[test]
+    fn ignore_interior_nul() {
+        let mut checker = Checker::with_locale("en_US").unwrap();
+        checker.ignore("foo\0bar");
+    }
+
+    #[test]
+    fn new_succeeds() {
+        assert!(Checker::with_locale("en_US").is_ok());
     }
 }

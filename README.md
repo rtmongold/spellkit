@@ -39,7 +39,7 @@ fn main() -> Result<(), spellkit::Error> {
 }
 ```
 
-`Checker::new()` uses a platform default: system language on macOS, `en-US` on Windows, and the first available of `en_US` / `en_GB` on Linux. Use `with_locale` for another language.
+`Checker::new()` uses a platform default: system language on macOS, the user locale on Windows (falling back to `en-US`), and `LC_ALL` / `LC_MESSAGES` / `LANG` on Linux when a dictionary exists (otherwise `en_US` / `en_GB`). Use `with_locale` for another language.
 
 Unknown or unsupported locales behave differently by platform:
 
@@ -49,7 +49,7 @@ Unknown or unsupported locales behave differently by platform:
 
 ## Threading
 
-macOS serializes access to the shared `NSSpellChecker`. Do not assume `Checker` is `Send` / `Sync` across platforms.
+`Checker` is not `Send` or `Sync`. Do not share it across threads. macOS also serializes access to the shared `NSSpellChecker`.
 
 ## Linux
 

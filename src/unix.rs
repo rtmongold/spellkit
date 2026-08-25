@@ -48,8 +48,36 @@ pub struct Checker {
     hunspell: *mut Hunhandle,
 }
 
+fn env_locale() -> Option<String> {
+    for key in ["LC_ALL", "LC_MESSAGES", "LANG"] {
+        let Ok(val) = std::env::var(key) else {
+            continue;
+        };
+        let val = val.trim();
+        if val.is_empty() || val == "C" || val == "POSIX" {
+            continue;
+        }
+        let base = val.split('.').next()?.split('@').next()?.trim();
+        if base.is_empty() {
+            continue;
+        }
+        return Some(base.replace('-', "_"));
+    }
+    None
+}
+
 impl Checker {
     pub fn new() -> Result<Self, Error> {
+        if let Some(loc) = env_locale() {
+            if let Ok(hunspell) = open_dictionary(&[&loc]) {
+                return Ok(Checker { hunspell });
+            }
+            if let Some((lang, _)) = loc.split_once('_') {
+                if let Ok(hunspell) = open_dictionary(&[lang]) {
+                    return Ok(Checker { hunspell });
+                }
+            }
+        }
         Ok(Checker {
             hunspell: open_dictionary(DEFAULT_LOCALES)?,
         })
