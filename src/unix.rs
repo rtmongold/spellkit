@@ -427,3 +427,18 @@ fn words<'a>(text: &'a str, word_chars: &'a WordChars) -> Words<'a> {
         pos: 0,
     }
 }
+
+#[cfg(test)]
+mod word_tests {
+    use super::*;
+    #[test]
+    fn trim_keeps_interior_apostrophe() {
+        let wc = WordChars {
+            extra: HashSet::new(),
+        };
+        let text = "'don't'";
+        let (s, e, w) = trim_word_edges(text, 0, text.len(), &wc).unwrap();
+        assert_eq!(w, "don't");
+        assert_eq!(&text[s..e], "don't");
+    }
+}

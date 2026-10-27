@@ -552,4 +552,32 @@ mod tests {
     fn new_succeeds() {
         assert!(Checker::with_locale("en_US").is_ok());
     }
+
+    #[test]
+    #[cfg(all(unix, not(target_os = "macos")))]
+    fn curly_apostrophe_is_one_word() {
+        let checker = Checker::with_locale("en_US").unwrap();
+        // U+2019 RIGHT SINGLE QUOTATION MARK between n and t
+        assert_eq!(checker.check("don\u{2019}t").count(), 0);
+        assert_eq!(checker.check("don't").count(), 0);
+    }
+
+    #[test]
+    #[cfg(all(unix, not(target_os = "macos")))]
+    fn quoted_word_strips_quotes() {
+        let checker = Checker::with_locale("en_US").unwrap();
+        assert_eq!(checker.check("'hello'").count(), 0);
+    }
+
+    #[test]
+    #[cfg(all(unix, not(target_os = "macos")))]
+    fn skips_url_and_email() {
+        let checker = Checker::with_locale("en_US").unwrap();
+        assert_eq!(
+            checker
+                .check("see https://example.com/foo and a@b.co please")
+                .count(),
+            0
+        );
+    }
 }
