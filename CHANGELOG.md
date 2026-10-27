@@ -11,6 +11,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 - Linux opens the dictionary stem it was given (`en_US-large`) before the normalized name
 - Linux `Checker::new()` reads `LC_CTYPE` instead of `LC_MESSAGES`, and falls back to a bare `en` dictionary
 - `with_locale("en")` tries `en`, then `en_US`, then `en_GB`
+- macOS `with_locale` stores the installed language tag that matched, and accepts a bare language when only a regional tag is installed
 
 ## [0.4.0] - 2026-08-25
 
