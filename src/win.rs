@@ -118,10 +118,10 @@ impl Checker {
                 }
             }
         }
-        Self::with_locale("en_US", "en-US")
+        Self::with_locale("en_US", "en_US", "en-US")
     }
 
-    pub fn with_locale(_hunspell: &str, bcp47: &str) -> Result<Self, Error> {
+    pub fn with_locale(_raw: &str, _hunspell: &str, bcp47: &str) -> Result<Self, Error> {
         Ok(Checker {
             checker: open_for_language(bcp47)?,
             locale: bcp47.to_owned(),

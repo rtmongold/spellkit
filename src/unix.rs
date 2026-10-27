@@ -17,7 +17,7 @@ const DICT_DIRS: &[&str] = &[
     "/usr/local/share/hunspell",
 ];
 
-const DEFAULT_LOCALES: &[&str] = &["en_US", "en_GB"];
+const DEFAULT_LOCALES: &[&str] = &["en_US", "en_GB", "en"];
 
 fn dict_search_dirs() -> Vec<PathBuf> {
     let mut dirs = Vec::new();
@@ -82,42 +82,33 @@ pub struct Checker {
     locale: String,
 }
 
-fn env_locale() -> Option<String> {
-    for key in ["LC_ALL", "LC_MESSAGES", "LANG"] {
-        let Ok(val) = std::env::var(key) else {
-            continue;
-        };
-        let val = val.trim();
-        if val.is_empty() || val == "C" || val == "POSIX" {
-            continue;
-        }
-        let base = val.split('.').next()?.split('@').next()?.trim();
-        if base.is_empty() {
-            continue;
-        }
-        return Some(base.replace('-', "_"));
-    }
-    None
-}
-
 impl Checker {
     pub fn new() -> Result<Self, Error> {
-        if let Some(loc) = env_locale() {
-            if let Ok((hunspell, locale)) = open_dictionary(&[&loc]) {
-                return Ok(Checker { hunspell, locale });
-            }
-            if let Some((lang, _)) = loc.split_once('_') {
-                if let Ok((hunspell, locale)) = open_dictionary(&[lang]) {
-                    return Ok(Checker { hunspell, locale });
+        if let Some(raw) = crate::locale_from_vars(|key| std::env::var(key).ok()) {
+            let (hunspell, _) = crate::normalize_locale(&raw);
+            let mut candidates = crate::lookup_candidates(&raw, &hunspell);
+            if let Some((lang, _)) = hunspell.split_once('_') {
+                if !candidates.contains(&lang) {
+                    candidates.push(lang);
                 }
             }
+            if let Ok((handle, locale)) = open_dictionary(&candidates) {
+                return Ok(Checker {
+                    hunspell: handle,
+                    locale,
+                });
+            }
         }
-        let (hunspell, locale) = open_dictionary(DEFAULT_LOCALES)?;
-        Ok(Checker { hunspell, locale })
+        let (handle, locale) = open_dictionary(DEFAULT_LOCALES)?;
+        Ok(Checker {
+            hunspell: handle,
+            locale,
+        })
     }
 
-    pub fn with_locale(hunspell_locale: &str, _bcp47: &str) -> Result<Self, Error> {
-        let (hunspell, locale) = open_dictionary(&[hunspell_locale])?;
+    pub fn with_locale(raw: &str, hunspell_locale: &str, _bcp47: &str) -> Result<Self, Error> {
+        let candidates = crate::lookup_candidates(raw, hunspell_locale);
+        let (hunspell, locale) = open_dictionary(&candidates)?;
         Ok(Checker { hunspell, locale })
     }
 

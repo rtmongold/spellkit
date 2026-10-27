@@ -87,7 +87,7 @@ impl Checker {
         })
     }
 
-    pub fn with_locale(_hunspell: &str, bcp47: &str) -> Result<Self, Error> {
+    pub fn with_locale(_raw: &str, _hunspell: &str, bcp47: &str) -> Result<Self, Error> {
         if bcp47.is_empty() {
             return Err(Error::InvalidLocale);
         }

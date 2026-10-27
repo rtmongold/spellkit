@@ -78,24 +78,72 @@ impl fmt::Display for Error {
 
 impl std::error::Error for Error {}
 
-fn normalize_locale(locale: &str) -> (String, String) {
-    let mut parts = locale
-        .trim()
+pub(crate) fn strip_posix_locale(locale: &str) -> &str {
+    locale.trim().split(['.', '@']).next().unwrap_or("").trim()
+}
+
+fn case_subtag(index: usize, part: &str) -> String {
+    if index == 0 {
+        return part.to_ascii_lowercase();
+    }
+    let alpha = part.chars().all(|c| c.is_ascii_alphabetic());
+    let digit = part.chars().all(|c| c.is_ascii_digit());
+    if alpha && part.len() == 4 {
+        let mut chars = part.chars();
+        let Some(first) = chars.next() else {
+            return String::new();
+        };
+        let mut out = String::new();
+        out.push(first.to_ascii_uppercase());
+        out.extend(chars.map(|c| c.to_ascii_lowercase()));
+        return out;
+    }
+    if (alpha && part.len() == 2) || (digit && part.len() == 3) {
+        return part.to_ascii_uppercase();
+    }
+    part.to_owned()
+}
+
+pub(crate) fn normalize_locale(locale: &str) -> (String, String) {
+    let parts: Vec<String> = strip_posix_locale(locale)
         .split(['_', '-'])
         .filter(|s| !s.is_empty())
-        .map(|s| s.to_string())
-        .collect::<Vec<_>>();
+        .enumerate()
+        .map(|(i, part)| case_subtag(i, part))
+        .collect();
+    (parts.join("_"), parts.join("-"))
+}
 
-    if let Some(lang) = parts.first_mut() {
-        *lang = lang.to_lowercase();
+#[cfg(all(unix, not(target_os = "macos")))]
+pub(crate) fn lookup_candidates<'a>(raw: &'a str, hunspell: &'a str) -> Vec<&'a str> {
+    let mut out = Vec::new();
+    let mut push = |s: &'a str| {
+        if !s.is_empty() && !out.contains(&s) {
+            out.push(s);
+        }
+    };
+    push(raw);
+    push(hunspell);
+    if hunspell == "en" {
+        push("en_US");
+        push("en_GB");
     }
-    if let Some(region) = parts.get_mut(1) {
-        *region = region.to_uppercase();
-    }
+    out
+}
 
-    let hunspell = parts.join("_");
-    let bcp47 = parts.join("-");
-    (hunspell, bcp47)
+#[cfg(any(all(unix, not(target_os = "macos")), test))]
+pub(crate) fn locale_from_vars(get: impl Fn(&str) -> Option<String>) -> Option<String> {
+    for key in ["LC_ALL", "LC_CTYPE", "LANG"] {
+        let Some(val) = get(key) else {
+            continue;
+        };
+        let base = strip_posix_locale(&val);
+        if base.is_empty() || base == "C" || base == "POSIX" {
+            continue;
+        }
+        return Some(base.to_owned());
+    }
+    None
 }
 
 cfg_if! {
@@ -123,8 +171,8 @@ pub struct Checker(imp::Checker, PhantomData<*const ()>);
 impl Checker {
     /// Create a checker with a platform default locale.
     ///
-    /// - **Linux:** `LC_ALL` / `LC_MESSAGES` / `LANG` if a Hunspell dictionary exists,
-    ///   otherwise `en_US` / `en_GB`.
+    /// - **Linux:** `LC_ALL` / `LC_CTYPE` / `LANG` if a Hunspell dictionary exists,
+    ///   otherwise `en_US` / `en_GB` / `en`.
     /// - **macOS:** the system default language
     /// - **Windows:** the user locale if the OS has a checker, otherwise `en-US`
     pub fn new() -> Result<Self, Error> {
@@ -137,15 +185,16 @@ impl Checker {
     /// - **Linux:** missing `.aff` / `.dic` → [`Error::DictionaryNotFound`]
     /// - **macOS / Windows:** language not installed → [`Error::UnsupportedLocale`]
     pub fn with_locale(locale: &str) -> Result<Self, Error> {
-        if locale.trim().is_empty() {
+        let raw = strip_posix_locale(locale);
+        if raw.is_empty() {
             return Err(Error::InvalidLocale);
         }
-        let (hunspell, bcp47) = normalize_locale(locale);
+        let (hunspell, bcp47) = normalize_locale(raw);
         if hunspell.is_empty() {
             return Err(Error::InvalidLocale);
         }
         Ok(Checker(
-            imp::Checker::with_locale(&hunspell, &bcp47)?,
+            imp::Checker::with_locale(raw, &hunspell, &bcp47)?,
             PhantomData,
         ))
     }
@@ -228,7 +277,7 @@ impl fmt::Display for SpellingError {
 
 #[cfg(test)]
 mod tests {
-    use super::{Checker, Error};
+    use super::{Checker, Error, locale_from_vars, normalize_locale};
 
     #[test]
     fn no_errors() {
@@ -306,6 +355,84 @@ mod tests {
             Checker::with_locale(""),
             Err(Error::InvalidLocale)
         ));
+    }
+
+    #[test]
+    fn normalize_locale_tags() {
+        assert_eq!(
+            normalize_locale("en_US.UTF-8"),
+            ("en_US".into(), "en-US".into())
+        );
+        assert_eq!(
+            normalize_locale("en_US.UTF-8@euro"),
+            ("en_US".into(), "en-US".into())
+        );
+        assert_eq!(normalize_locale("en-us"), ("en_US".into(), "en-US".into()));
+        assert_eq!(
+            normalize_locale("zh-Hans-CN"),
+            ("zh_Hans_CN".into(), "zh-Hans-CN".into())
+        );
+        assert_eq!(
+            normalize_locale("zh_hans_cn"),
+            ("zh_Hans_CN".into(), "zh-Hans-CN".into())
+        );
+        assert_eq!(
+            normalize_locale("sr-Latn-RS"),
+            ("sr_Latn_RS".into(), "sr-Latn-RS".into())
+        );
+        assert_eq!(
+            normalize_locale("es-419"),
+            ("es_419".into(), "es-419".into())
+        );
+        assert_eq!(
+            normalize_locale("en_US-large"),
+            ("en_US_large".into(), "en-US-large".into())
+        );
+    }
+
+    #[test]
+    fn locale_from_vars_order() {
+        let get = |key: &str| match key {
+            "LC_MESSAGES" => Some("fr_FR".into()),
+            "LC_CTYPE" => Some("de_DE.UTF-8".into()),
+            "LANG" => Some("en_US".into()),
+            _ => None,
+        };
+        assert_eq!(locale_from_vars(get).as_deref(), Some("de_DE"));
+
+        let get = |key: &str| match key {
+            "LC_ALL" => Some("C".into()),
+            "LANG" => Some("en_GB.UTF-8".into()),
+            _ => None,
+        };
+        assert_eq!(locale_from_vars(get).as_deref(), Some("en_GB"));
+    }
+
+    #[test]
+    fn with_locale_encoding_only() {
+        assert!(matches!(
+            Checker::with_locale(".UTF-8"),
+            Err(Error::InvalidLocale)
+        ));
+        assert!(matches!(
+            Checker::with_locale("@euro"),
+            Err(Error::InvalidLocale)
+        ));
+    }
+
+    #[test]
+    #[cfg(all(unix, not(target_os = "macos")))]
+    fn with_locale_raw_stem_and_bare_en() {
+        assert!(Checker::with_locale("en_US.UTF-8").is_ok());
+        assert!(Checker::with_locale("en-us").is_ok());
+        let checker = Checker::with_locale("en").unwrap();
+        assert!(matches!(checker.locale(), "en" | "en_US" | "en_GB"));
+        if std::path::Path::new("/usr/share/hunspell/en_US-large.aff").is_file()
+            && std::path::Path::new("/usr/share/hunspell/en_US-large.dic").is_file()
+        {
+            let checker = Checker::with_locale("en_US-large").unwrap();
+            assert_eq!(checker.locale(), "en_US-large");
+        }
     }
 
     #[test]
