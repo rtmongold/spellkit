@@ -22,15 +22,47 @@ fn language_ref(language: &str) -> Retained<NSString> {
     ns_string(language)
 }
 
-fn mac_locale_supported(requested_bcp47: &str, available: &str) -> bool {
-    let want = requested_bcp47.replace('_', "-");
-    let have = available.replace('_', "-");
-    if want.eq_ignore_ascii_case(&have) {
-        return true;
+fn tag_key(tag: &str) -> String {
+    tag.replace('_', "-").to_ascii_lowercase()
+}
+
+fn language_subtag(tag: &str) -> &str {
+    tag.split(['-', '_']).next().unwrap_or("")
+}
+
+fn is_language_only(tag: &str) -> bool {
+    !tag.contains('-') && !tag.contains('_')
+}
+
+/// Pick the installed language tag to store for `requested`.
+fn resolve_mac_locale(requested: &str, available: &[String]) -> Option<String> {
+    let want = tag_key(requested);
+    let want_lang = language_subtag(&want);
+
+    if let Some(tag) = available.iter().find(|t| {
+        let have = tag_key(t);
+        have == want || have.starts_with(&(want.clone() + "-"))
+    }) {
+        return Some(tag.clone());
     }
-    let want_lang = want.split('-').next().unwrap_or("");
-    let have_parts: Vec<_> = have.split('-').collect();
-    have_parts.len() == 1 && have_parts[0].eq_ignore_ascii_case(want_lang)
+
+    if let Some(tag) = available
+        .iter()
+        .find(|t| is_language_only(t) && language_subtag(t).eq_ignore_ascii_case(want_lang))
+    {
+        return Some(tag.clone());
+    }
+
+    if is_language_only(requested) {
+        if let Some(tag) = available
+            .iter()
+            .find(|t| language_subtag(t).eq_ignore_ascii_case(want_lang))
+        {
+            return Some(tag.clone());
+        }
+    }
+
+    None
 }
 
 fn nsarray_to_strings(
@@ -93,15 +125,14 @@ impl Checker {
         }
         let available =
             with_checker(|c| nsarray_to_strings(Some(c.availableLanguages().as_ref()), usize::MAX));
-        let ok = available.iter().any(|t| mac_locale_supported(bcp47, t));
-        if !ok {
+        let Some(language) = resolve_mac_locale(bcp47, &available) else {
             return Err(Error::UnsupportedLocale {
                 locale: bcp47.to_owned(),
             });
-        }
+        };
         Ok(Self {
             document_tag: NSSpellChecker::uniqueSpellDocumentTag(),
-            language: bcp47.to_owned(),
+            language,
         })
     }
 
