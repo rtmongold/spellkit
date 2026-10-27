@@ -208,9 +208,9 @@ impl Checker {
 
     /// Check `text` for spelling errors.
     ///
-    /// Ranges are UTF-8 byte offsets. Linux tokenizes words itself (alphanumeric
-    /// and `'`). macOS and Windows use the OS spell-checking APIs, so word breaks
-    /// may differ.
+    /// Ranges are UTF-8 byte offsets. Linux tokenizes with Hunspell `WORDCHARS` /
+    /// `ICONV` from the dictionary `.aff`, skips URLs and emails, and trims
+    /// leading/trailing quote-like word characters. macOS and Windows use the OS APIs.
     pub fn check<'a>(
         &'a self,
         text: &'a str,

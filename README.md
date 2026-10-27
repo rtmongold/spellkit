@@ -89,7 +89,7 @@ fn main() -> Result<(), spellkit::Error> {
 
 Linux also honors `DICPATH` (colon-separated directories) before `/usr/share/hunspell` and the other built-in paths.
 
-Word breaks are **not** identical: Linux tokenizes alphanumeric / `'` runs; macOS and Windows use the OS checker.
+Word breaks are **not** identical: Linux uses the dictionary `.aff` (`WORDCHARS` / `ICONV`), skips URLs and emails, and trims edge quotes; macOS and Windows use the OS checker.
 
 ## How it works
 
