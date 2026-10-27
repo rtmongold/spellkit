@@ -1,5 +1,6 @@
 use crate::Error;
 
+use std::collections::HashSet;
 use std::ffi::{CStr, CString};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
@@ -47,7 +48,85 @@ fn find_dictionary(dirs: &[PathBuf], locales: &[&str]) -> Option<(PathBuf, PathB
     None
 }
 
-fn open_dictionary(locales: &[&str]) -> Result<(*mut Hunhandle, String), Error> {
+#[derive(Clone, Debug)]
+struct WordChars {
+    /// Extra chars beyond alphanumeric and ASCII `'`.
+    extra: HashSet<char>,
+}
+
+impl WordChars {
+    fn contains(&self, c: char) -> bool {
+        c.is_alphanumeric() || c == '\'' || self.extra.contains(&c)
+    }
+
+    fn from_aff(aff: &Path) -> Self {
+        let mut extra = HashSet::new();
+        let Ok(contents) = std::fs::read_to_string(aff) else {
+            return Self { extra };
+        };
+
+        let mut lines = contents.lines();
+        while let Some(line) = lines.next() {
+            let line = line.trim();
+            if line.is_empty() || line.starts_with("#") {
+                continue;
+            }
+
+            if let Some(rest) = line.strip_prefix("WORDCHARS") {
+                for c in rest.trim().chars() {
+                    if !c.is_whitespace() {
+                        extra.insert(c);
+                    }
+                }
+                continue;
+            }
+
+            // `ICONV N` then N mapping lines: `from to` or `ICONV from to`
+            let mut parts = line.split_whitespace();
+            if parts.next() != Some("ICONV") {
+                continue;
+            }
+            let Some(count_str) = parts.next() else {
+                continue;
+            };
+            let Ok(count) = count_str.parse::<usize>() else {
+                continue;
+            };
+            if parts.next().is_some() {
+                // Same line is a mapping (`ICONV ' '`), not a count.
+                continue;
+            }
+
+            for _ in 0..count {
+                let Some(map_line) = lines.next() else {
+                    break;
+                };
+                let map_line = map_line.trim();
+                let map_line = map_line.strip_prefix("ICONV").unwrap_or(map_line).trim();
+                let mut map = map_line.split_whitespace();
+                let Some(from) = map.next() else {
+                    continue;
+                };
+                let Some(to) = map.next() else {
+                    continue;
+                };
+                // Add ICONV sources whose dest is `'` or already a word char.
+                let to_is_word = to
+                    .chars()
+                    .all(|c| c.is_alphanumeric() || c == '\'' || extra.contains(&c));
+                if to == "'" || to_is_word {
+                    for c in from.chars() {
+                        extra.insert(c);
+                    }
+                }
+            }
+        }
+
+        Self { extra }
+    }
+}
+
+fn open_dictionary(locales: &[&str]) -> Result<(*mut Hunhandle, String, WordChars), Error> {
     let dirs = dict_search_dirs();
     let Some((aff, dic, locale)) = find_dictionary(&dirs, locales) else {
         return Err(Error::DictionaryNotFound {
@@ -55,6 +134,7 @@ fn open_dictionary(locales: &[&str]) -> Result<(*mut Hunhandle, String), Error> 
             searched: dirs,
         });
     };
+    let word_chars = WordChars::from_aff(&aff);
     let label = Some(locale.clone());
     let aff_c =
         CString::new(aff.as_os_str().as_bytes()).map_err(|_| Error::InitializationFailed {
@@ -73,43 +153,50 @@ fn open_dictionary(locales: &[&str]) -> Result<(*mut Hunhandle, String), Error> 
             message: "Hunspell_create returned null".into(),
         });
     }
-    Ok((hunspell, locale))
+    Ok((hunspell, locale, word_chars))
 }
 
 #[derive(Debug)]
 pub struct Checker {
     hunspell: *mut Hunhandle,
     locale: String,
+    word_chars: WordChars,
 }
 
 impl Checker {
     pub fn new() -> Result<Self, Error> {
         if let Some(raw) = crate::locale_from_vars(|key| std::env::var(key).ok()) {
-            let (hunspell, _) = crate::normalize_locale(&raw);
-            let mut candidates = crate::lookup_candidates(&raw, &hunspell);
-            if let Some((lang, _)) = hunspell.split_once('_') {
+            let (hunspell_tag, _) = crate::normalize_locale(&raw);
+            let mut candidates = crate::lookup_candidates(&raw, &hunspell_tag);
+            if let Some((lang, _)) = hunspell_tag.split_once('_') {
                 if !candidates.contains(&lang) {
                     candidates.push(lang);
                 }
             }
-            if let Ok((handle, locale)) = open_dictionary(&candidates) {
+            if let Ok((handle, locale, word_chars)) = open_dictionary(&candidates) {
                 return Ok(Checker {
                     hunspell: handle,
                     locale,
+                    word_chars,
                 });
             }
         }
-        let (handle, locale) = open_dictionary(DEFAULT_LOCALES)?;
+        let (handle, locale, word_chars) = open_dictionary(DEFAULT_LOCALES)?;
         Ok(Checker {
             hunspell: handle,
             locale,
+            word_chars,
         })
     }
 
     pub fn with_locale(raw: &str, hunspell_locale: &str, _bcp47: &str) -> Result<Self, Error> {
         let candidates = crate::lookup_candidates(raw, hunspell_locale);
-        let (hunspell, locale) = open_dictionary(&candidates)?;
-        Ok(Checker { hunspell, locale })
+        let (hunspell, locale, word_chars) = open_dictionary(&candidates)?;
+        Ok(Checker {
+            hunspell,
+            locale,
+            word_chars,
+        })
     }
 
     pub fn locale(&self) -> &str {
@@ -171,10 +258,10 @@ impl Checker {
         }
     }
 
-    pub fn check<'a>(&self, text: &'a str) -> impl Iterator<Item = SpellingError> + 'a + use<'a> {
+    pub fn check<'a>(&'a self, text: &'a str) -> impl Iterator<Item = SpellingError> + 'a {
         let hunspell = self.hunspell;
-
-        words(text).filter_map(move |(start, end, word)| {
+        let word_chars = &self.word_chars;
+        words(text, word_chars).filter_map(move |(start, end, word)| {
             let cstr = CString::new(word).ok()?;
             let ok =
                 unsafe { Hunspell_spell(hunspell, cstr.as_bytes_with_nul().as_ptr() as *const i8) }
@@ -231,28 +318,112 @@ impl SpellingError {
     }
 }
 
-fn is_word_char(c: char) -> bool {
-    c.is_alphanumeric() || c == '\''
+fn trim_word_edges<'a>(
+    text: &'a str,
+    start: usize,
+    end: usize,
+    wc: &WordChars,
+) -> Option<(usize, usize, &'a str)> {
+    let mut s = start;
+    let mut e = end;
+    while s < e {
+        let c = text[s..e].chars().next()?;
+        if c.is_alphanumeric() {
+            break;
+        }
+        if !wc.contains(c) {
+            break;
+        }
+        s += c.len_utf8();
+    }
+    while e > s {
+        let c = text[s..e].chars().next_back()?;
+        if c.is_alphanumeric() {
+            break;
+        }
+        if !wc.contains(c) {
+            break;
+        }
+        e -= c.len_utf8();
+    }
+    if s >= e {
+        return None;
+    }
+    Some((s, e, &text[s..e]))
 }
 
-fn words(text: &str) -> impl Iterator<Item = (usize, usize, &str)> {
-    let mut words = Vec::new();
-    let mut chars = text.char_indices().peekable();
-
-    while let Some((start, c)) = chars.next() {
-        if !is_word_char(c) {
-            continue;
-        }
-
-        let mut end = start + c.len_utf8();
-        while let Some(&(i, next)) = chars.peek() {
-            if !is_word_char(next) {
-                break;
-            }
-            end = i + next.len_utf8();
-            chars.next();
-        }
-        words.push((start, end, &text[start..end]));
+/// If `text[from..]` starts a URL or email token, return the byte index after it.
+fn skip_url_or_email(text: &str, from: usize) -> Option<usize> {
+    let rest = &text[from..];
+    let token_end = rest
+        .find(|c: char| c.is_whitespace())
+        .map(|o| from + o)
+        .unwrap_or(text.len());
+    let token = &text[from..token_end];
+    if token.contains("://") {
+        return Some(token_end);
     }
-    words.into_iter()
+    if let Some(at) = token.find('@') {
+        let domain = &token[at + 1..];
+        if domain.contains('.') {
+            return Some(token_end);
+        }
+    }
+    None
+}
+
+struct Words<'a> {
+    text: &'a str,
+    word_chars: &'a WordChars,
+    pos: usize,
+}
+
+impl<'a> Iterator for Words<'a> {
+    type Item = (usize, usize, &'a str);
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let bytes = self.text.as_bytes();
+        while self.pos < bytes.len() {
+            // Skip whitespace.
+            let c = self.text[self.pos..].chars().next()?;
+            if c.is_whitespace() {
+                self.pos += c.len_utf8();
+                continue;
+            }
+
+            if let Some(after) = skip_url_or_email(self.text, self.pos) {
+                self.pos = after;
+                continue;
+            }
+
+            if !self.word_chars.contains(c) {
+                self.pos += c.len_utf8();
+                continue;
+            }
+
+            let start = self.pos;
+            self.pos += c.len_utf8();
+            while self.pos < bytes.len() {
+                let next = self.text[self.pos..].chars().next()?;
+                if !self.word_chars.contains(next) {
+                    break;
+                }
+                self.pos += next.len_utf8();
+            }
+            let end = self.pos;
+
+            if let Some(item) = trim_word_edges(self.text, start, end, self.word_chars) {
+                return Some(item);
+            }
+        }
+        None
+    }
+}
+
+fn words<'a>(text: &'a str, word_chars: &'a WordChars) -> Words<'a> {
+    Words {
+        text,
+        word_chars,
+        pos: 0,
+    }
 }

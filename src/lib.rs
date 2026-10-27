@@ -211,7 +211,10 @@ impl Checker {
     /// Ranges are UTF-8 byte offsets. Linux tokenizes words itself (alphanumeric
     /// and `'`). macOS and Windows use the OS spell-checking APIs, so word breaks
     /// may differ.
-    pub fn check<'a>(&self, text: &'a str) -> impl Iterator<Item = SpellingError> + 'a + use<'a> {
+    pub fn check<'a>(
+        &'a self,
+        text: &'a str,
+    ) -> impl Iterator<Item = SpellingError> + 'a + use<'a> {
         self.0.check(text).map(SpellingError)
     }
 
