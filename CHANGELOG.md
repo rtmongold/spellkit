@@ -6,12 +6,16 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Changed
+- Linux `Checker::check` iterators now borrow the checker (needed for affix-based word breaks)
+
 ### Fixed
 - Locale tags keep script and region case (`zh-Hans-CN`), and a POSIX encoding or `@modifier` is stripped before lookup
 - Linux opens the dictionary stem it was given (`en_US-large`) before the normalized name
 - Linux `Checker::new()` reads `LC_CTYPE` instead of `LC_MESSAGES`, and falls back to a bare `en` dictionary
 - `with_locale("en")` tries `en`, then `en_US`, then `en_GB`
 - macOS `with_locale` stores the installed language tag that matched, and accepts a bare language when only a regional tag is installed
+- Linux tokenization uses Hunspell `WORDCHARS`/`ICONV`, keeps curly apostrophes in words, trims edge quotes, and skips URLs and emails
 
 ## [0.4.0] - 2026-08-25
 
