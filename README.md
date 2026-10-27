@@ -79,7 +79,7 @@ fn main() -> Result<(), spellkit::Error> {
 | | Linux | macOS | Windows |
 | --- | --- | --- | --- |
 | Backend | Hunspell | NSSpellChecker | ISpellChecker |
-| `Checker::new()` | `LC_ALL` / `LC_MESSAGES` / `LANG` if a dict exists, else `en_US` / `en_GB` | system language | user locale, else `en-US` |
+| `Checker::new()` | `LC_ALL` / `LC_CTYPE` / `LANG` if a dict exists, else `en_US` / `en_GB` / `en` | system language | user locale, else `en-US` |
 | Unknown `with_locale` | `Error::DictionaryNotFound` (paths searched) | `Error::UnsupportedLocale` | `Error::UnsupportedLocale` |
 | Empty locale | `Error::InvalidLocale` | `Error::InvalidLocale` | `Error::InvalidLocale` |
 | Suggestions | yes | yes | yes |
