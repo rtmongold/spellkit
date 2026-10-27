@@ -252,3 +252,49 @@ impl Iterator for SpellcheckIter {
         })
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::resolve_mac_locale;
+
+    fn avail(tags: &[&str]) -> Vec<String> {
+        tags.iter().map(|s| (*s).to_owned()).collect()
+    }
+
+    #[test]
+    fn exact_match() {
+        assert_eq!(
+            resolve_mac_locale("en_GB", &avail(&["en-US", "en-GB"])).as_deref(),
+            Some("en-GB")
+        );
+    }
+
+    #[test]
+    fn regional_request_matches_language_only() {
+        assert_eq!(
+            resolve_mac_locale("en-GB", &avail(&["en"])).as_deref(),
+            Some("en")
+        );
+    }
+
+    #[test]
+    fn language_only_request_matches_first_regional() {
+        assert_eq!(
+            resolve_mac_locale("en", &avail(&["en-US", "en-GB"])).as_deref(),
+            Some("en-US")
+        );
+    }
+
+    #[test]
+    fn regional_does_not_cross_match() {
+        assert_eq!(resolve_mac_locale("en-GB", &avail(&["en-US"])), None);
+    }
+
+    #[test]
+    fn script_request_matches_regional() {
+        assert_eq!(
+            resolve_mac_locale("zh-Hans", &avail(&["zh-Hans-CN"])).as_deref(),
+            Some("zh-Hans-CN")
+        );
+    }
+}
