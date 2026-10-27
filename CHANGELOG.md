@@ -6,6 +6,12 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Fixed
+- Locale tags keep script and region case (`zh-Hans-CN`), and a POSIX encoding or `@modifier` is stripped before lookup
+- Linux opens the dictionary stem it was given (`en_US-large`) before the normalized name
+- Linux `Checker::new()` reads `LC_CTYPE` instead of `LC_MESSAGES`, and falls back to a bare `en` dictionary
+- `with_locale("en")` tries `en`, then `en_US`, then `en_GB`
+
 ## [0.4.0] - 2026-08-25
 
 ### Breaking
