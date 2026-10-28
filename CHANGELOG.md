@@ -18,6 +18,11 @@ This project follows [Semantic Versioning](https://semver.org/).
 - Linux tokenization uses Hunspell `WORDCHARS`/`ICONV`, keeps curly apostrophes in words, trims edge quotes, and skips URLs and emails
 - `is_correct` requires a single whitespace-delimited token with a letter or digit; empty and punctuation-only inputs are false
 - Linux also searches XDG hunspell dirs and `/app/share/hunspell` (Flatpak) for dictionaries
+- Linux Hunspell FFI uses `c_char` so builds succeed on aarch64
+
+### Thanks
+
+- Contributions: @engult
 
 ## [0.4.0] - 2026-08-25
 
