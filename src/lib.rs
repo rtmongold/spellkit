@@ -560,6 +560,11 @@ mod tests {
         let checker = Checker::with_locale("en_US").unwrap();
         assert!(checker.is_correct("believe"));
         assert!(!checker.is_correct("beleeve"));
+        assert!(!checker.is_correct(""));
+        assert!(!checker.is_correct("   "));
+        assert!(!checker.is_correct("!!!"));
+        assert!(!checker.is_correct("hello world"));
+        assert!(checker.is_correct("  believe  "));
     }
 
     #[test]
