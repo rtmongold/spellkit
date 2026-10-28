@@ -84,10 +84,10 @@ fn main() -> Result<(), spellkit::Error> {
 | Empty locale | `Error::InvalidLocale` | `Error::InvalidLocale` | `Error::InvalidLocale` |
 | Suggestions | yes | yes | yes |
 | `ignore` | yes (this handle only) | yes (this document tag only) | yes (this checker only) |
-| `available_locales` | `*.dic` stems on disk (`DICPATH` then system dirs) | `availableLanguages` | `SupportedLanguages` |
+| `available_locales` | `*.dic` stems (`DICPATH`, XDG, system dirs, Flatpak) | `availableLanguages` | `SupportedLanguages` |
 | `Send` / `Sync` | no | no | no |
 
-Linux also honors `DICPATH` (colon-separated directories) before `/usr/share/hunspell` and the other built-in paths.
+Linux dictionary search order: `DICPATH`, then `$XDG_DATA_HOME/hunspell` (or `~/.local/share/hunspell`), then the built-in system paths, then each `$XDG_DATA_DIRS` entry plus `/hunspell` (default `/usr/local/share:/usr/share`), then `/app/share/hunspell` for Flatpak. Duplicates are skipped.
 
 Word breaks are **not** identical: Linux uses the dictionary `.aff` (`WORDCHARS` / `ICONV`), skips URLs and emails, and trims edge quotes; macOS and Windows use the OS checker.
 
