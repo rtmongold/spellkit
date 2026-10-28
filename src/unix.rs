@@ -484,6 +484,7 @@ fn words<'a>(text: &'a str, word_chars: &'a WordChars) -> Words<'a> {
 #[cfg(test)]
 mod word_tests {
     use super::*;
+
     #[test]
     fn trim_keeps_interior_apostrophe() {
         let wc = WordChars {
@@ -493,5 +494,56 @@ mod word_tests {
         let (s, e, w) = trim_word_edges(text, 0, text.len(), &wc).unwrap();
         assert_eq!(w, "don't");
         assert_eq!(&text[s..e], "don't");
+    }
+}
+
+#[cfg(test)]
+mod path_tests {
+    use super::*;
+    use std::path::PathBuf;
+
+    #[test]
+    fn search_order_dicpath_xdg_system_flatpak() {
+        let dirs = dict_search_dirs_from(
+            Some("/custom/dicts"),
+            Some("/xdg/data"),
+            Some("/home/rob"),
+            Some("/opt/share"),
+        );
+
+        assert_eq!(dirs[0], PathBuf::from("/custom/dicts"));
+        assert_eq!(dirs[1], PathBuf::from("/xdg/data/hunspell"));
+        assert_eq!(dirs[2], PathBuf::from("/usr/share/hunspell"));
+        assert!(dirs.contains(&PathBuf::from("/usr/share/myspell/dicts")));
+        assert!(dirs.contains(&PathBuf::from("/usr/share/myspell")));
+        assert!(dirs.contains(&PathBuf::from("/usr/local/share/hunspell")));
+        assert!(dirs.contains(&PathBuf::from("/opt/share/hunspell")));
+        assert_eq!(dirs.last().unwrap(), &PathBuf::from("/app/share/hunspell"));
+        // HOME fallback not used when XDG_DATA_HOME is set
+        assert!(!dirs.iter().any(|d| d.ends_with(".local/share/hunspell")));
+    }
+
+    #[test]
+    fn home_fallback_when_xdg_data_home_unset() {
+        let dirs = dict_search_dirs_from(None, None, Some("/home/rob"), None);
+        assert_eq!(dirs[0], PathBuf::from("/home/rob/.local/share/hunspell"));
+        // default XDG_DATA_DIRS entries appear (may dedup with DICT_DIRS)
+        assert!(dirs.contains(&PathBuf::from("/usr/local/share/hunspell")));
+        assert!(dirs.contains(&PathBuf::from("/usr/share/hunspell")));
+        assert_eq!(dirs.last().unwrap(), &PathBuf::from("/app/share/hunspell"));
+    }
+    #[test]
+    fn dedups_overlapping_paths() {
+        let dirs = dict_search_dirs_from(
+            Some("/usr/share/hunspell"),
+            None,
+            None,
+            Some("/usr/share"), // → /usr/share/hunspell again
+        );
+        let count = dirs
+            .iter()
+            .filter(|d| *d == Path::new("/usr/share/hunspell"))
+            .count();
+        assert_eq!(count, 1);
     }
 }
