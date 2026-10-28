@@ -115,8 +115,8 @@ Word breaks are **not** identical: Linux uses the dictionary `.aff` (`WORDCHARS`
 
 ## Linux packages
 
-- Arch: `pacman -S hunspell hunspell-en_us`
-- Debian/Ubuntu: `apt install libhunspell-dev hunspell-en-us`
+- Arch: `pacman -S hunspell hunspell-en_us pkgconf`
+- Debian/Ubuntu: `apt install libhunspell-dev hunspell-en-us pkg-config`
 - Extra languages used in CI: `hunspell-de-de`, `hunspell-fr`
 
 Without a dictionary, `Checker::new()` returns `Error::DictionaryNotFound`.
