@@ -218,8 +218,28 @@ impl Checker {
         self.0.check(text).map(SpellingError)
     }
 
-    /// Returns true if `word` is spelled correctly.
+    /// Returns true if `word` is a single spelled-correctly token.
+    ///
+    /// The input is trimmed. It must be exactly one whitespace-delimited token
+    /// that contains at least one letter or digit. Otherwise this returns
+    /// `false` (empty input, `"!!!"`, `"hello world"`, etc.).
     pub fn is_correct(&self, word: &str) -> bool {
+        let word = word.trim();
+        if word.is_empty() {
+            return false;
+        }
+
+        let mut tokens = word.split_whitespace();
+        let Some(token) = tokens.next() else {
+            return false;
+        };
+        if tokens.next().is_some() {
+            return false;
+        }
+        if !token.chars().any(|c| c.is_alphanumeric()) {
+            return false;
+        }
+
         self.check(word).next().is_none()
     }
 
