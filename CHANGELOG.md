@@ -22,7 +22,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Thanks
 
-- Contributions: @engult
+- Contributions: @englut
 
 ## [0.4.0] - 2026-08-25
 
