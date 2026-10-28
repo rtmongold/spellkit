@@ -285,11 +285,11 @@ impl Checker {
         };
 
         unsafe {
-            let mut list: *mut *mut i8 = ptr::null_mut();
+            let mut list: *mut *mut ::std::os::raw::c_char = ptr::null_mut();
             let n = Hunspell_suggest(
                 self.hunspell,
                 &mut list,
-                cstr.as_bytes_with_nul().as_ptr() as *const i8,
+                cstr.as_bytes_with_nul().as_ptr() as *const ::std::os::raw::c_char,
             );
             if n <= 0 || list.is_null() {
                 return Vec::new();
@@ -316,9 +316,12 @@ impl Checker {
         let word_chars = &self.word_chars;
         words(text, word_chars).filter_map(move |(start, end, word)| {
             let cstr = CString::new(word).ok()?;
-            let ok =
-                unsafe { Hunspell_spell(hunspell, cstr.as_bytes_with_nul().as_ptr() as *const i8) }
-                    != 0;
+            let ok = unsafe {
+                Hunspell_spell(
+                    hunspell,
+                    cstr.as_bytes_with_nul().as_ptr() as *const ::std::os::raw::c_char,
+                )
+            } != 0;
             if ok {
                 None
             } else {
@@ -339,7 +342,7 @@ impl Checker {
         unsafe {
             Hunspell_add(
                 self.hunspell,
-                cstr.as_bytes_with_nul().as_ptr() as *const i8,
+                cstr.as_bytes_with_nul().as_ptr() as *const ::std::os::raw::c_char,
             )
         };
     }
