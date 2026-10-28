@@ -181,7 +181,11 @@ impl Checker {
 
     /// Create a checker for a specific locale (`en_US` or `en-US` both work).
     ///
-    /// - empty string - [`Error::InvalidLocale`]
+    /// A POSIX encoding or `@modifier` is stripped first. On Linux the raw stem
+    /// is tried before the normalized name (so `en_US-large` works), and a bare
+    /// `en` falls back to `en_US` then `en_GB`.
+    ///
+    /// - empty string → [`Error::InvalidLocale`]
     /// - **Linux:** missing `.aff` / `.dic` → [`Error::DictionaryNotFound`]
     /// - **macOS / Windows:** language not installed → [`Error::UnsupportedLocale`]
     pub fn with_locale(locale: &str) -> Result<Self, Error> {

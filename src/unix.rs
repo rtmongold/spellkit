@@ -29,12 +29,12 @@ fn push_unique(dirs: &mut Vec<PathBuf>, path: PathBuf) {
 /// Build the Hunspell search path list.
 ///
 /// Order:
-/// 1. `DICPATH` (colon-seperated)
+/// 1. `DICPATH` (colon-separated)
 /// 2. `$XDG_DATA_HOME/hunspell`, or `$HOME/.local/share/hunspell`
-/// 3. built-in system dirs (`DICT_DIRS1)
+/// 3. built-in system dirs (`DICT_DIRS`)
 /// 4. each `$XDG_DATA_DIRS` entry + `/hunspell`
 ///    (default `XDG_DATA_DIRS` = `/usr/local/share:/usr/share`)
-/// 5. `/app/share/hunspell` (Flatpak))
+/// 5. `/app/share/hunspell` (Flatpak)
 fn dict_search_dirs_from(
     dicpath: Option<&str>,
     xdg_data_home: Option<&str>,
