@@ -17,6 +17,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 - macOS `with_locale` stores the installed language tag that matched, and accepts a bare language when only a regional tag is installed
 - Linux tokenization uses Hunspell `WORDCHARS`/`ICONV`, keeps curly apostrophes in words, trims edge quotes, and skips URLs and emails
 - `is_correct` requires a single whitespace-delimited token with a letter or digit; empty and punctuation-only inputs are false
+- Linux also searches XDG hunspell dirs and `/app/share/hunspell` (Flatpak) for dictionaries
 
 ## [0.4.0] - 2026-08-25
 
