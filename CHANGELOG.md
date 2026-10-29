@@ -6,6 +6,8 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.4.1] - 2026-10.28
+
 ### Changed
 - Linux `Checker::check` iterators now borrow the checker (needed for affix-based word breaks)
 - Linux links Hunspell via a small hand-written FFI and `pkg-config` instead of `hunspell-sys` (no bindgen/clang)
