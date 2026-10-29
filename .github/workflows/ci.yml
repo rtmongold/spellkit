@@ -36,7 +36,7 @@ jobs:
             hunspell-en-us \
             hunspell-de-de \
             hunspell-fr \
-            libclang-dev
+            pkg-config
 
       - name: Test
         run: cargo test --all-targets
@@ -53,6 +53,6 @@ jobs:
       - name: Install hunspell
         run: |
           sudo apt-get update
-          sudo apt-get install -y libhunspell-dev hunspell-en-us libclang-dev
+          sudo apt-get install -y libhunspell-dev hunspell-en-us pkg-config
       - run: cargo fmt --all -- --check
       - run: cargo clippy --all-targets -- -D warnings

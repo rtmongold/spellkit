@@ -1,12 +1,14 @@
 use crate::Error;
 
 use std::collections::HashSet;
-use std::ffi::{CStr, CString};
+use std::ffi::{CStr, CString, c_char};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::ptr;
 
-use hunspell_sys::{
+mod ffi;
+
+use crate::unix::ffi::{
     Hunhandle, Hunspell_add, Hunspell_create, Hunspell_destroy, Hunspell_free_list, Hunspell_spell,
     Hunspell_suggest,
 };
@@ -285,12 +287,8 @@ impl Checker {
         };
 
         unsafe {
-            let mut list: *mut *mut ::std::os::raw::c_char = ptr::null_mut();
-            let n = Hunspell_suggest(
-                self.hunspell,
-                &mut list,
-                cstr.as_bytes_with_nul().as_ptr() as *const ::std::os::raw::c_char,
-            );
+            let mut list: *mut *mut c_char = ptr::null_mut();
+            let n = Hunspell_suggest(self.hunspell, &mut list, cstr.as_ptr());
             if n <= 0 || list.is_null() {
                 return Vec::new();
             }
@@ -316,12 +314,7 @@ impl Checker {
         let word_chars = &self.word_chars;
         words(text, word_chars).filter_map(move |(start, end, word)| {
             let cstr = CString::new(word).ok()?;
-            let ok = unsafe {
-                Hunspell_spell(
-                    hunspell,
-                    cstr.as_bytes_with_nul().as_ptr() as *const ::std::os::raw::c_char,
-                )
-            } != 0;
+            let ok = unsafe { Hunspell_spell(hunspell, cstr.as_ptr()) } != 0;
             if ok {
                 None
             } else {
@@ -339,12 +332,7 @@ impl Checker {
             return;
         };
 
-        unsafe {
-            Hunspell_add(
-                self.hunspell,
-                cstr.as_bytes_with_nul().as_ptr() as *const ::std::os::raw::c_char,
-            )
-        };
+        unsafe { Hunspell_add(self.hunspell, cstr.as_ptr()) };
     }
 }
 

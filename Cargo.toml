@@ -29,8 +29,8 @@ features = [
     "Win32_System_Com",
 ]
 
-[target.'cfg(all(unix, not(target_os = "macos")))'.dependencies]
-hunspell-sys = "0.3.1"
+[build-dependencies]
+pkg-config = "0.3"
 
 [dependencies]
 cfg-if = "1.0.4"
