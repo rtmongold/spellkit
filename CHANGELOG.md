@@ -8,6 +8,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Changed
 - Linux `Checker::check` iterators now borrow the checker (needed for affix-based word breaks)
+- Linux links Hunspell via a small hand-written FFI and `pkg-config` instead of `hunspell-sys` (no bindgen/clang)
 
 ### Fixed
 - Locale tags keep script and region case (`zh-Hans-CN`), and a POSIX encoding or `@modifier` is stripped before lookup
@@ -22,7 +23,7 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Thanks
 
-- Contributions: @englut
+- Contributions: @englut, @luca020400
 
 ## [0.4.0] - 2026-08-25
 
