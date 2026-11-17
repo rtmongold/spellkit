@@ -85,10 +85,10 @@ fn main() -> Result<(), spellkit::Error> {
 | Empty locale | `Error::InvalidLocale` | `Error::InvalidLocale` | `Error::InvalidLocale` |
 | Suggestions | yes | yes | yes |
 | `ignore` | yes (this handle only) | yes (this document tag only) | yes (this checker only) |
-| `available_locales` | `*.dic` stems (`DICPATH`, XDG, system dirs, Flatpak) | `availableLanguages` | `SupportedLanguages` |
+| `available_locales` | stems with both `.aff` and `.dic` (`DICPATH`, XDG, system dirs, Flatpak) | `availableLanguages` | `SupportedLanguages` |
 | `Send` / `Sync` | no | no | no |
 
-Linux dictionary search order: `DICPATH`, then `$XDG_DATA_HOME/hunspell` (or `~/.local/share/hunspell`), then the built-in system paths, then each `$XDG_DATA_DIRS` entry plus `/hunspell` (default `/usr/local/share:/usr/share`), then `/app/share/hunspell` for Flatpak. Duplicates are skipped.
+Linux dictionary search order: `DICPATH`, then `$XDG_DATA_HOME/hunspell` (or `~/.local/share/hunspell`), then the built-in system paths, then each `$XDG_DATA_DIRS` entry plus `/hunspell` (default `/usr/local/share:/usr/share`), then Flatpak `/app/share/hunspell` and host mounts `/run/host/usr/share/hunspell` and `/run/host/usr/share/myspell/dicts`. Duplicates are skipped.
 
 On Linux, `with_locale("en")` tries `en`, then `en_US`, then `en_GB`. A regional tag like `en_AU` does not fall back to another region.
 
@@ -119,6 +119,8 @@ Word breaks are **not** identical: Linux uses the dictionary `.aff` (`WORDCHARS`
 - Debian/Ubuntu: `apt install libhunspell-dev hunspell-en-us pkg-config`
 - Extra languages used in CI: `hunspell-de-de`, `hunspell-fr`
 
+Build needs the Hunspell development package and pkg-config. Runtime needs the Hunspell shared library and language dictionaries. A missing `.so` fails when the process loads, not as `Error::*`.
+
 Without a dictionary, `Checker::new()` returns `Error::DictionaryNotFound`.
 
 ## Examples
@@ -130,7 +132,19 @@ Without a dictionary, `Checker::new()` returns `Error::DictionaryNotFound`.
 
 ## Threading
 
-`Checker` is not `Send` or `Sync`. Do not share it across threads. macOS also serializes access to the shared `NSSpellChecker`.
+`Checker` is not `Send` or `Sync`. Create and use it on one thread only (typically the UI thread).
+
+A common pattern is a `thread_local!` slot that owns the checker for that thread:
+
+```rust
+use std::cell::RefCell;
+
+thread_local! {
+    static CHECKER: RefCell<Option<spellkit::Checker>> = const { RefCell::new(None) };
+}
+```
+
+Do not move a `Checker` into `std::thread::spawn`, rayon, or async tasks. On macOS, Spellkit also serializes access to the shared `NSSpellChecker`.
 
 ## Documentation
 

@@ -542,6 +542,26 @@ mod tests {
     }
 
     #[test]
+    fn utf8_range_astral_prefix() {
+        let text = "🙂 beleeve";
+        let checker = Checker::with_locale("en_US").unwrap();
+        let errors: Vec<_> = checker.check(text).collect();
+        let e = errors
+            .iter()
+            .find(|e| e.text() == "beleeve")
+            .unwrap_or_else(|| {
+                panic!(
+                    "expected beleeve, got {:?}",
+                    errors.iter().map(|e| e.text()).collect::<Vec<_>>()
+                )
+            });
+        assert_eq!(&text[e.start()..e.end()], "beleeve");
+        assert!(text.is_char_boundary(e.start()));
+        assert!(text.is_char_boundary(e.end()));
+        assert_eq!(e.range(), e.start()..e.end());
+    }
+
+    #[test]
     fn locale_en() {
         let checker = Checker::with_locale("en_US").unwrap();
         assert!(checker.locale().to_lowercase().contains("en"));

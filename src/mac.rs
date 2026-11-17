@@ -10,7 +10,7 @@ use objc2_foundation::{NSInteger, NSNotFound, NSRange, NSString};
 /// `NSSpellChecker` is not thread-safe; serialize access.
 fn with_checker<R>(f: impl FnOnce(&NSSpellChecker) -> R) -> R {
     static LOCK: Mutex<()> = Mutex::new(());
-    let _lock = LOCK.lock().unwrap();
+    let _lock = LOCK.lock().unwrap_or_else(|e| e.into_inner());
     f(&NSSpellChecker::sharedSpellChecker())
 }
 
@@ -106,7 +106,12 @@ impl Drop for Checker {
 
 impl Checker {
     pub fn new() -> Result<Self, Error> {
-        let language = with_checker(|c| c.language().to_string());
+        let (language, document_tag) = with_checker(|c| {
+            (
+                c.language().to_string(),
+                NSSpellChecker::uniqueSpellDocumentTag(),
+            )
+        });
         if language.is_empty() {
             return Err(Error::InitializationFailed {
                 locale: None,
@@ -114,7 +119,7 @@ impl Checker {
             });
         }
         Ok(Self {
-            document_tag: NSSpellChecker::uniqueSpellDocumentTag(),
+            document_tag,
             language,
         })
     }
@@ -123,15 +128,19 @@ impl Checker {
         if bcp47.is_empty() {
             return Err(Error::InvalidLocale);
         }
-        let available =
-            with_checker(|c| nsarray_to_strings(Some(c.availableLanguages().as_ref()), usize::MAX));
+        let (available, document_tag) = with_checker(|c| {
+            (
+                nsarray_to_strings(Some(c.availableLanguages().as_ref()), usize::MAX),
+                NSSpellChecker::uniqueSpellDocumentTag(),
+            )
+        });
         let Some(language) = resolve_mac_locale(bcp47, &available) else {
             return Err(Error::UnsupportedLocale {
                 locale: bcp47.to_owned(),
             });
         };
         Ok(Self {
-            document_tag: NSSpellChecker::uniqueSpellDocumentTag(),
+            document_tag,
             language,
         })
     }
@@ -241,12 +250,23 @@ impl Iterator for SpellcheckIter {
         let utf16_end = range.location + range.length;
         let start = utf16_offset_to_utf8(&self.original, utf16_start);
         let end = utf16_offset_to_utf8(&self.original, utf16_end);
-        let misspelling = self.original[start..end].to_owned();
 
         self.ns_offset = utf16_end;
 
+        if !self.original.is_char_boundary(start)
+            || !self.original.is_char_boundary(end)
+            || start > end
+        {
+            return self.next();
+        }
+        let Some(misspelling) = self.original.get(start..end) else {
+            return self.next();
+        };
+        if misspelling.is_empty() {
+            return self.next();
+        }
         Some(SpellingError {
-            text: misspelling,
+            text: misspelling.to_owned(),
             start,
             end,
         })

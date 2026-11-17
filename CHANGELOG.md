@@ -6,7 +6,25 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
-## [0.4.1] - 2026-10.28
+## [0.4.2] - 2026-11-17
+
+### Changed
+- Windows COM init uses apartment-threaded mode and balances `CoUninitialize` for an owned init
+- README documents UI-thread / `thread_local!` usage for `!Send` `Checker`, and Linux build vs runtime Hunspell requirements
+- Linux Flatpak dictionary search also walks host mounts under `/run/host/usr/share/...`
+
+### Fixed
+- Linux `Checker::new()` no longer falls back to English after `InitializationFailed` for the environment locale
+- Linux `available_locales()` only lists stems that have both `.aff` and `.dic`
+- Windows spelling error iteration no longer panics or aborts on bad COM ranges; misspelled text is taken from the original UTF-8 string
+- macOS allocates `uniqueSpellDocumentTag` under the shared `NSSpellChecker` lock
+- macOS spelling ranges skip entries that are not valid UTF-8 char boundaries
+- `build.rs` surfaces the pkg-config error and reruns when `PKG_CONFIG_PATH` changes
+
+### Added
+- Regression test for UTF-8 ranges when an astral character precedes a misspelling
+
+## [0.4.1] - 2026-10-28
 
 ### Changed
 - Linux `Checker::check` iterators now borrow the checker (needed for affix-based word breaks)
