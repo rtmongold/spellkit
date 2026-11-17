@@ -1,27 +1,21 @@
 use crate::Error;
 
-use std::ffi::OsStr;
-use std::iter;
-use std::os::windows::ffi::OsStrExt;
+use std::cell::{Cell, RefCell};
 
 use windows::{
     Win32::{
-        Foundation::S_FALSE,
+        Foundation::{RPC_E_CHANGED_MODE, S_FALSE, S_OK},
         Globalization::{
             IEnumSpellingError, ISpellChecker, ISpellCheckerFactory, ISpellingError,
             SpellCheckerFactory,
         },
         System::Com::{
-            CLSCTX_INPROC_SERVER, COINIT_MULTITHREADED, CoCreateInstance, CoInitializeEx,
-            CoTaskMemFree,
+            CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
+            CoTaskMemFree, CoUninitialize,
         },
     },
     core::{HSTRING, PWSTR},
 };
-
-fn wide_string(s: &str) -> Vec<u16> {
-    OsStr::new(s).encode_wide().chain(iter::once(0)).collect()
-}
 
 fn utf16_offset_to_utf8(s: &str, utf16_units: usize) -> usize {
     let mut units = 0;
@@ -34,11 +28,61 @@ fn utf16_offset_to_utf8(s: &str, utf16_units: usize) -> usize {
     s.len()
 }
 
+thread_local! {
+    static COM_OWNED: Cell<bool> = const { Cell::new(false) };
+}
+
+fn ensure_com() -> Result<(), Error> {
+    let hr = unsafe { CoInitializeEx(None, COINIT_APARTMENTTHREADED) };
+    if hr == S_OK {
+        COM_OWNED.with(|owned| {
+            if !owned.get() {
+                owned.set(true);
+            }
+        });
+        return Ok(());
+    }
+    if hr == S_FALSE || hr == RPC_E_CHANGED_MODE {
+        return Ok(());
+    }
+    Err(Error::InitializationFailed {
+        locale: None,
+        message: format!("CoInitializeEx failed: {hr:?}"),
+    })
+}
+
+struct ComThreadGuard;
+
+impl Drop for ComThreadGuard {
+    fn drop(&mut self) {
+        COM_OWNED.with(|owned| {
+            if owned.replace(false) {
+                unsafe { CoUninitialize() };
+            }
+        });
+    }
+}
+
+thread_local! {
+    static COM_GUARD: RefCell<Option<ComThreadGuard>> = const { RefCell::new(None) };
+}
+
+fn ensure_com_guarded() -> Result<(), Error> {
+    ensure_com()?;
+    COM_GUARD.with(|g| {
+        let mut g = g.borrow_mut();
+        if g.is_none() && COM_OWNED.with(|o| o.get()) {
+            *g = Some(ComThreadGuard);
+        }
+    });
+    Ok(())
+}
+
 fn open_for_language(bcp47: &str) -> Result<ISpellChecker, Error> {
     if bcp47.is_empty() {
         return Err(Error::InvalidLocale);
     }
-    let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+    ensure_com_guarded()?;
 
     let factory: ISpellCheckerFactory =
         unsafe { CoCreateInstance(&SpellCheckerFactory, None, CLSCTX_INPROC_SERVER) }.map_err(
@@ -66,7 +110,9 @@ fn open_for_language(bcp47: &str) -> Result<ISpellChecker, Error> {
 }
 
 fn supported_language_tags() -> Vec<String> {
-    let _ = unsafe { CoInitializeEx(None, COINIT_MULTITHREADED) };
+    if ensure_com_guarded().is_err() {
+        return Vec::new();
+    }
     let factory: ISpellCheckerFactory =
         match unsafe { CoCreateInstance(&SpellCheckerFactory, None, CLSCTX_INPROC_SERVER) } {
             Ok(f) => f,
@@ -172,20 +218,14 @@ impl Checker {
         if text.is_empty() {
             return ErrorIter {
                 original: String::new(),
-                text: vec![],
                 iter: None,
             };
         }
 
         let original = text.to_owned();
-        let wide = wide_string(text);
         let iter = unsafe { self.checker.ComprehensiveCheck(&HSTRING::from(text)) }.ok();
 
-        ErrorIter {
-            original,
-            text: wide,
-            iter,
-        }
+        ErrorIter { original, iter }
     }
 
     pub fn ignore(&mut self, word: &str) {
@@ -198,7 +238,6 @@ impl Checker {
 
 struct ErrorIter {
     original: String,
-    text: Vec<u16>,
     iter: Option<IEnumSpellingError>,
 }
 
@@ -208,25 +247,49 @@ impl Iterator for ErrorIter {
     fn next(&mut self) -> Option<SpellingError> {
         let iter = self.iter.as_ref()?;
 
-        let mut err: Option<ISpellingError> = None;
-        let hr = unsafe { iter.Next(&mut err) };
-        if hr == S_FALSE {
-            return None;
+        loop {
+            let mut err: Option<ISpellingError> = None;
+            let hr = unsafe { iter.Next(&mut err) };
+            if hr == S_FALSE {
+                return None;
+            }
+            let Some(err) = err else {
+                return None;
+            };
+
+            let Ok(start) = (unsafe { err.StartIndex() }) else {
+                continue;
+            };
+            let Ok(length) = (unsafe { err.Length() }) else {
+                continue;
+            };
+            let start = start as usize;
+            let length = length as usize;
+            let Some(end_units) = start.checked_add(length) else {
+                continue;
+            };
+
+            let byte_start = utf16_offset_to_utf8(&self.original, start);
+            let byte_end = utf16_offset_to_utf8(&self.original, end_units);
+            if !self.original.is_char_boundary(byte_start)
+                || !self.original.is_char_boundary(byte_end)
+                || byte_start > byte_end
+            {
+                continue;
+            }
+            let Some(err_text) = self.original.get(byte_start..byte_end) else {
+                continue;
+            };
+            if err_text.is_empty() {
+                continue;
+            }
+
+            return Some(SpellingError {
+                text: err_text.to_owned(),
+                start: byte_start,
+                end: byte_end,
+            });
         }
-        let err = err?;
-
-        let start = unsafe { err.StartIndex() }.ok()? as usize;
-        let length = unsafe { err.Length() }.ok()? as usize;
-
-        let err_text = String::from_utf16(&self.text[start..start + length]).ok()?;
-        let byte_start = utf16_offset_to_utf8(&self.original, start);
-        let byte_end = utf16_offset_to_utf8(&self.original, start + length);
-
-        Some(SpellingError {
-            text: err_text,
-            start: byte_start,
-            end: byte_end,
-        })
     }
 }
 

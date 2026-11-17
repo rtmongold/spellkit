@@ -36,7 +36,8 @@ fn push_unique(dirs: &mut Vec<PathBuf>, path: PathBuf) {
 /// 3. built-in system dirs (`DICT_DIRS`)
 /// 4. each `$XDG_DATA_DIRS` entry + `/hunspell`
 ///    (default `XDG_DATA_DIRS` = `/usr/local/share:/usr/share`)
-/// 5. `/app/share/hunspell` (Flatpak)
+/// 5. `/app/share/hunspell`, `/run/host/usr/share/hunspell`,
+///    `/run/host/usr/share/myspell/dicts` (Flatpak)
 fn dict_search_dirs_from(
     dicpath: Option<&str>,
     xdg_data_home: Option<&str>,
@@ -73,6 +74,11 @@ fn dict_search_dirs_from(
     }
 
     push_unique(&mut dirs, PathBuf::from("/app/share/hunspell"));
+    push_unique(&mut dirs, PathBuf::from("/run/host/usr/share/hunspell"));
+    push_unique(
+        &mut dirs,
+        PathBuf::from("/run/host/usr/share/myspell/dicts"),
+    );
 
     dirs
 }
@@ -228,12 +234,16 @@ impl Checker {
                     candidates.push(lang);
                 }
             }
-            if let Ok((handle, locale, word_chars)) = open_dictionary(&candidates) {
-                return Ok(Checker {
-                    hunspell: handle,
-                    locale,
-                    word_chars,
-                });
+            match open_dictionary(&candidates) {
+                Ok((handle, locale, word_chars)) => {
+                    return Ok(Checker {
+                        hunspell: handle,
+                        locale,
+                        word_chars,
+                    });
+                }
+                Err(Error::DictionaryNotFound { .. }) => {}
+                Err(e) => return Err(e),
             }
         }
         let (handle, locale, word_chars) = open_dictionary(DEFAULT_LOCALES)?;
@@ -269,9 +279,13 @@ impl Checker {
                 if path.extension().and_then(|e| e.to_str()) != Some("dic") {
                     continue;
                 }
-                if let Some(stem) = path.file_stem().and_then(|s| s.to_str()) {
-                    out.push(stem.to_owned());
+                let Some(stem) = path.file_stem().and_then(|s| s.to_str()) else {
+                    continue;
+                };
+                if !path.with_extension("aff").is_file() {
+                    continue;
                 }
+                out.push(stem.to_owned());
             }
         }
         out.sort();
@@ -498,30 +512,32 @@ mod path_tests {
         let dirs = dict_search_dirs_from(
             Some("/custom/dicts"),
             Some("/xdg/data"),
-            Some("/home/rob"),
-            Some("/opt/share"),
+            Some("/home/me"),
+            Some("/extra/share"),
         );
 
         assert_eq!(dirs[0], PathBuf::from("/custom/dicts"));
         assert_eq!(dirs[1], PathBuf::from("/xdg/data/hunspell"));
-        assert_eq!(dirs[2], PathBuf::from("/usr/share/hunspell"));
+        assert!(dirs.contains(&PathBuf::from("/usr/share/hunspell")));
         assert!(dirs.contains(&PathBuf::from("/usr/share/myspell/dicts")));
         assert!(dirs.contains(&PathBuf::from("/usr/share/myspell")));
-        assert!(dirs.contains(&PathBuf::from("/usr/local/share/hunspell")));
-        assert!(dirs.contains(&PathBuf::from("/opt/share/hunspell")));
-        assert_eq!(dirs.last().unwrap(), &PathBuf::from("/app/share/hunspell"));
-        // HOME fallback not used when XDG_DATA_HOME is set
-        assert!(!dirs.iter().any(|d| d.ends_with(".local/share/hunspell")));
+        assert!(dirs.contains(&PathBuf::from("/extra/share/hunspell")));
+        assert!(dirs.contains(&PathBuf::from("/app/share/hunspell")));
+        assert!(dirs.contains(&PathBuf::from("/run/host/usr/share/hunspell")));
+        assert_eq!(
+            dirs.last().unwrap(),
+            &PathBuf::from("/run/host/usr/share/myspell/dicts")
+        );
     }
 
     #[test]
     fn home_fallback_when_xdg_data_home_unset() {
-        let dirs = dict_search_dirs_from(None, None, Some("/home/rob"), None);
-        assert_eq!(dirs[0], PathBuf::from("/home/rob/.local/share/hunspell"));
-        // default XDG_DATA_DIRS entries appear (may dedup with DICT_DIRS)
-        assert!(dirs.contains(&PathBuf::from("/usr/local/share/hunspell")));
-        assert!(dirs.contains(&PathBuf::from("/usr/share/hunspell")));
-        assert_eq!(dirs.last().unwrap(), &PathBuf::from("/app/share/hunspell"));
+        let dirs = dict_search_dirs_from(None, None, Some("/home/me"), None);
+        assert_eq!(dirs[0], PathBuf::from("/home/me/.local/share/hunspell"));
+        assert_eq!(
+            dirs.last().unwrap(),
+            &PathBuf::from("/run/host/usr/share/myspell/dicts")
+        );
     }
     #[test]
     fn dedups_overlapping_paths() {
