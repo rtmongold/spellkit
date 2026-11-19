@@ -6,6 +6,12 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+### Added
+- `examples/ui_integration.rs` showing UI-thread ownership, soft-fail on missing dictionaries, check/suggest/ignore, and a revision-token sketch
+
+### Changed
+- Expanded rustdoc on `check` range guarantees, `ignore` session semantics, and soft-fail guidance for locale/dictionary errors
+
 ## [0.4.2] - 2026-11-17
 
 ### Changed

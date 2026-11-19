@@ -37,22 +37,29 @@ use std::path::PathBuf;
 ///
 /// Match on this instead of a single “unavailable” flag: Linux can report missing
 /// Hunspell files, while macOS and Windows report an unsupported language tag.
+///
+/// In a UI, treat [`Error::DictionaryNotFound`], [`Error::UnsupportedLocale`], and
+/// [`Error::InitializationFailed`] as soft-disable (log and leave spellcheck off).
+/// Do not abort the process.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Error {
     /// The locale string was empty or could not be normalized.
     InvalidLocale,
     /// The OS has no spell checker for this language (macOS / Windows).
+    ///
+    /// Soft-disable spellcheck for this locale; do not crash the app.
     UnsupportedLocale { locale: String },
     /// No Hunspell `.aff` / `.dic` pair was found (Linux / other Unix).
     ///
     /// `searched` is the directory list that was walked (`DICPATH`, XDG
     /// hunspell dirs, system paths, then Flatpak `/app/share/hunspell`).
+    /// Soft-disable spellcheck; do not crash the app.
     DictionaryNotFound {
         locale: String,
         searched: Vec<PathBuf>,
     },
     /// The backend started but failed (null Hunspell handle, COM factory, empty
-    /// macOS system language).
+    /// macOS system language). Soft-disable spellcheck; do not crash the app.
     InitializationFailed {
         locale: Option<String>,
         message: String,
@@ -163,7 +170,11 @@ cfg_if! {
 
 /// Instance of the system spell checker.
 ///
-/// `Checker` is not `Send` or `Sync`. Do not share it across threads.
+/// `Checker` is not `Send` or `Sync`. Create and use it on one thread only
+/// (typically the UI thread). Keep one instance per locale on that thread;
+/// recreate when the locale changes. See the crate README sections
+/// "Threading" and "Integrating in a UI", and `examples/ui_integration.rs`.
+///
 /// macOS also serializes access to the shared `NSSpellChecker`.
 #[derive(Debug)]
 pub struct Checker(imp::Checker, PhantomData<*const ()>);
@@ -205,16 +216,30 @@ impl Checker {
 
     /// Spelling suggestions for `word`.
     ///
-    /// Returns at most 10 suggestions, or an empty list if none are available.
+    /// Returns at most 10 suggestions, or an empty list if none are available
+    /// (including empty `word`). Ranking order is backend-defined and is not
+    /// guaranteed to match across platforms.
+    ///
+    /// Pass a single token, usually [`SpellingError::text`] from [`Checker::check`].
+    /// Multi-word strings are not a supported input.
     pub fn suggest(&self, word: &str) -> Vec<String> {
         self.0.suggest(word)
     }
 
     /// Check `text` for spelling errors.
     ///
-    /// Ranges are UTF-8 byte offsets. Linux tokenizes with Hunspell `WORDCHARS` /
-    /// `ICONV` from the dictionary `.aff`, skips URLs and emails, and trims
-    /// leading/trailing quote-like word characters. macOS and Windows use the OS APIs.
+    /// Ranges are UTF-8 byte offsets into the same `text` you passed in. Linux
+    /// tokenizes with Hunspell `WORDCHARS` / `ICONV` from the dictionary `.aff`,
+    /// skips URLs and emails, and trims leading/trailing quote-like word
+    /// characters. macOS and Windows use the OS APIs (those platforms do **not**
+    /// promise the Linux URL/email skips).
+    ///
+    /// # Guarantees
+    ///
+    /// - `start` / `end` are UTF-8 char boundaries of `text`.
+    /// - `&text[err.start()..err.end()] == err.text()` and
+    ///   `&text[err.range()] == err.text()`.
+    /// - Empty `text` yields an empty iterator.
     pub fn check<'a>(
         &'a self,
         text: &'a str,
@@ -247,9 +272,15 @@ impl Checker {
         self.check(word).next().is_none()
     }
 
-    /// Instructs the spell checker to ignore a word in future checks. The word is temporarily
-    /// added to the spell checker's ignore list, and other instances of the spell checker will not
-    /// ignore the word.
+    /// Ignore `word` for future [`Checker::check`] calls on **this** instance.
+    ///
+    /// - **Linux:** this Hunspell handle only.
+    /// - **macOS:** this document tag only.
+    /// - **Windows:** this COM checker only.
+    ///
+    /// Not persisted across process restarts. Not shared with another
+    /// [`Checker`]. For a durable personal dictionary, keep the word list in
+    /// the app, call `ignore` after each create.
     pub fn ignore(&mut self, word: &str) {
         self.0.ignore(word)
     }
@@ -271,26 +302,27 @@ impl Checker {
     }
 }
 
-/// A spelling error.
+/// A spelling error in a string previously passed to [`Checker::check`].
+///
+/// `start` / `end` / `range` are UTF-8 char boundaries into that same string.
+/// `&text[err.range()]` equals [`SpellingError::text`].
 pub struct SpellingError(imp::SpellingError);
 
 impl SpellingError {
-    /// Returns the text of the misspelled word.
+    /// Misspelled token (`&text[start()..end()]`).
     pub fn text(&self) -> &str {
         self.0.text()
     }
-    /// Inclusive start index of the misspelling, as a UTF-8 byte offset into the
-    /// original text. `&text[start()..end()]` is the misspelled word.
+    /// Inclusive UTF-8 byte start into the original `text` (char boundary).
     pub fn start(&self) -> usize {
         self.0.start()
     }
-    /// Exclusive end index of the misspelling, as a UTF-8 byte offset into the
-    /// original text. `&text[start()..end()]` is the misspelled word.
+    /// Exclusive UTF-8 byte end into the original `text` (char boundary).
     pub fn end(&self) -> usize {
         self.0.end()
     }
 
-    /// UTF-8 byte range of the misspelling: `start()..end()`.
+    /// `start()..end()`.
     pub fn range(&self) -> Range<usize> {
         self.start()..self.end()
     }
