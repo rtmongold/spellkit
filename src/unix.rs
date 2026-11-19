@@ -2,6 +2,7 @@ use crate::Error;
 
 use std::collections::HashSet;
 use std::ffi::{CStr, CString, c_char};
+use std::fs::{OpenOptions, create_dir_all, write};
 use std::os::unix::ffi::OsStrExt;
 use std::path::{Path, PathBuf};
 use std::ptr;
@@ -9,8 +10,8 @@ use std::ptr;
 mod ffi;
 
 use crate::unix::ffi::{
-    Hunhandle, Hunspell_add, Hunspell_create, Hunspell_destroy, Hunspell_free_list, Hunspell_spell,
-    Hunspell_suggest,
+    Hunhandle, Hunspell_add, Hunspell_create, Hunspell_destroy, Hunspell_free_list,
+    Hunspell_remove, Hunspell_spell, Hunspell_suggest,
 };
 
 const DICT_DIRS: &[&str] = &[
@@ -107,6 +108,78 @@ fn find_dictionary(dirs: &[PathBuf], locales: &[&str]) -> Option<(PathBuf, PathB
         }
     }
     None
+}
+
+/// `$XDG_DATA_HOME/spellkit/<locale>.words` or `$HOME/.local/share/spellkit/<locale>.words`
+fn personal_wordlist_path(locale: &str) -> PathBuf {
+    let base = std::env::var_os("XDG_DATA_HOME")
+        .map(PathBuf::from)
+        .or_else(|| std::env::var_os("HOME").map(|h| PathBuf::from(h).join(".local/share")))
+        .unwrap_or_else(|| PathBuf::from("."));
+    base.join("spellkit").join(format!("{locale}.words"))
+}
+
+fn load_personal(
+    hunspell: *mut Hunhandle,
+    locale: &str,
+) -> Result<(HashSet<String>, PathBuf), Error> {
+    let personal_path = personal_wordlist_path(locale);
+    let mut learned = HashSet::new();
+    if personal_path.is_file() {
+        let contents = std::fs::read_to_string(&personal_path).map_err(|e| Error::Io {
+            message: format!("read {}: {e}", personal_path.display()),
+        })?;
+        for line in contents.lines() {
+            let word = line.trim();
+            if word.is_empty() || word.starts_with('#') {
+                continue;
+            }
+            let Ok(cstr) = CString::new(word) else {
+                continue;
+            };
+            unsafe { Hunspell_add(hunspell, cstr.as_ptr()) };
+            learned.insert(word.to_owned());
+        }
+    }
+    Ok((learned, personal_path))
+}
+
+fn append_word(path: &Path, word: &str) -> Result<(), Error> {
+    if let Some(parent) = path.parent() {
+        create_dir_all(parent).map_err(|e| Error::Io {
+            message: format!("create_dir_all {}: {e}", parent.display()),
+        })?;
+    }
+    use std::io::Write;
+    let mut f = OpenOptions::new()
+        .create(true)
+        .append(true)
+        .open(path)
+        .map_err(|e| Error::Io {
+            message: format!("open {}: {e}", path.display()),
+        })?;
+    writeln!(f, "{word}").map_err(|e| Error::Io {
+        message: format!("append {}: {e}", path.display()),
+    })
+}
+
+fn rewrite_wordlist(path: &Path, learned: &HashSet<String>) -> Result<(), Error> {
+    if let Some(parent) = path.parent() {
+        create_dir_all(parent).map_err(|e| Error::Io {
+            message: format!("create_dir_all {}: {e}", parent.display()),
+        })?;
+    }
+    let mut words: Vec<_> = learned.iter().cloned().collect();
+    words.sort();
+    let body = words.join("\n");
+    let body = if body.is_empty() {
+        String::new()
+    } else {
+        body + "\n"
+    };
+    write(path, body).map_err(|e| Error::Io {
+        message: format!("write {}: {e}", path.display()),
+    })
 }
 
 #[derive(Clone, Debug)]
@@ -222,6 +295,8 @@ pub struct Checker {
     hunspell: *mut Hunhandle,
     locale: String,
     word_chars: WordChars,
+    learned: HashSet<String>,
+    personal_path: PathBuf,
 }
 
 impl Checker {
@@ -236,10 +311,13 @@ impl Checker {
             }
             match open_dictionary(&candidates) {
                 Ok((handle, locale, word_chars)) => {
+                    let (learned, personal_path) = load_personal(handle, &locale)?;
                     return Ok(Checker {
                         hunspell: handle,
                         locale,
                         word_chars,
+                        learned,
+                        personal_path,
                     });
                 }
                 Err(Error::DictionaryNotFound { .. }) => {}
@@ -247,20 +325,26 @@ impl Checker {
             }
         }
         let (handle, locale, word_chars) = open_dictionary(DEFAULT_LOCALES)?;
+        let (learned, personal_path) = load_personal(handle, &locale)?;
         Ok(Checker {
             hunspell: handle,
             locale,
             word_chars,
+            learned,
+            personal_path,
         })
     }
 
     pub fn with_locale(raw: &str, hunspell_locale: &str, _bcp47: &str) -> Result<Self, Error> {
         let candidates = crate::lookup_candidates(raw, hunspell_locale);
         let (hunspell, locale, word_chars) = open_dictionary(&candidates)?;
+        let (learned, personal_path) = load_personal(hunspell, &locale)?;
         Ok(Checker {
             hunspell,
             locale,
             word_chars,
+            learned,
+            personal_path,
         })
     }
 
@@ -347,6 +431,37 @@ impl Checker {
         };
 
         unsafe { Hunspell_add(self.hunspell, cstr.as_ptr()) };
+    }
+
+    pub fn learn(&mut self, word: &str) -> Result<(), Error> {
+        if word.is_empty() {
+            return Ok(());
+        }
+        if self.learned.contains(word) {
+            return Ok(());
+        }
+        let cstr = CString::new(word).map_err(|_| Error::Io {
+            message: "word contains NUL".into(),
+        })?;
+        unsafe { Hunspell_add(self.hunspell, cstr.as_ptr()) };
+        self.learned.insert(word.to_owned());
+        append_word(&self.personal_path, word)
+    }
+
+    pub fn unlearn(&mut self, word: &str) -> Result<(), Error> {
+        if word.is_empty() {
+            return Ok(());
+        }
+        let cstr = CString::new(word).map_err(|_| Error::Io {
+            message: "word contains NUL".into(),
+        })?;
+        unsafe { Hunspell_remove(self.hunspell, cstr.as_ptr()) };
+        self.learned.remove(word);
+        rewrite_wordlist(&self.personal_path, &self.learned)
+    }
+
+    pub fn has_learned(&self, word: &str) -> bool {
+        !word.is_empty() && self.learned.contains(word)
     }
 }
 

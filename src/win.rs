@@ -1,20 +1,22 @@
 use crate::Error;
 
 use std::cell::{Cell, RefCell};
+use std::collections::HashSet;
+use std::path::{Path, PathBuf};
 
 use windows::{
     Win32::{
         Foundation::{RPC_E_CHANGED_MODE, S_FALSE, S_OK},
         Globalization::{
-            IEnumSpellingError, ISpellChecker, ISpellCheckerFactory, ISpellingError,
-            SpellCheckerFactory,
+            IEnumSpellingError, ISpellChecker, ISpellChecker2, ISpellCheckerFactory,
+            ISpellingError, SpellCheckerFactory,
         },
         System::Com::{
             CLSCTX_INPROC_SERVER, COINIT_APARTMENTTHREADED, CoCreateInstance, CoInitializeEx,
             CoTaskMemFree, CoUninitialize,
         },
     },
-    core::{HSTRING, PWSTR},
+    core::{HSTRING, Interface, PWSTR},
 };
 
 fn utf16_offset_to_utf8(s: &str, utf16_units: usize) -> usize {
@@ -144,10 +146,60 @@ fn supported_language_tags() -> Vec<String> {
     out
 }
 
+fn spelling_dic_path(tag: &str) -> Option<PathBuf> {
+    let appdata = std::env::var_os("APPDATA")?;
+    Some(
+        PathBuf::from(appdata)
+            .join("Microsoft")
+            .join("Spelling")
+            .join(tag)
+            .join("default.dic"),
+    )
+}
+
+fn read_dic_words(path: &Path) -> HashSet<String> {
+    let Ok(bytes) = std::fs::read(path) else {
+        return HashSet::new();
+    };
+    if bytes.len() < 2 {
+        return HashSet::new();
+    }
+    let rest = if bytes[0] == 0xFF && bytes[1] == 0xFE {
+        &bytes[2..]
+    } else {
+        bytes.as_slice()
+    };
+    if rest.len() % 2 != 0 {
+        return HashSet::new();
+    }
+    let u16s: Vec<u16> = rest
+        .chunks_exact(2)
+        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+        .collect();
+    let Ok(text) = String::from_utf16(&u16s) else {
+        return HashSet::new();
+    };
+    text.lines()
+        .map(|line| line.trim().to_owned())
+        .filter(|l| !l.is_empty())
+        .collect()
+}
+
+fn load_learned(bcp47: &str) -> HashSet<String> {
+    let mut out = HashSet::new();
+    for tag in [bcp47, "neutral"] {
+        if let Some(path) = spelling_dic_path(tag) {
+            out.extend(read_dic_words(&path));
+        }
+    }
+    out
+}
+
 #[derive(Debug)]
 pub struct Checker {
     checker: ISpellChecker,
     locale: String,
+    learned: HashSet<String>,
 }
 
 impl Checker {
@@ -159,6 +211,7 @@ impl Checker {
                 if let Ok(checker) = open_for_language(&tag) {
                     return Ok(Checker {
                         checker,
+                        learned: load_learned(&tag),
                         locale: tag,
                     });
                 }
@@ -171,6 +224,7 @@ impl Checker {
         Ok(Checker {
             checker: open_for_language(bcp47)?,
             locale: bcp47.to_owned(),
+            learned: load_learned(bcp47),
         })
     }
 
@@ -233,6 +287,35 @@ impl Checker {
             return;
         }
         let _ = unsafe { self.checker.Ignore(&HSTRING::from(word)) };
+    }
+
+    pub fn learn(&mut self, word: &str) -> Result<(), Error> {
+        if word.is_empty() {
+            return Ok(());
+        }
+        unsafe { self.checker.Add(&HSTRING::from(word)) }.map_err(|e| Error::Io {
+            message: format!("ISpellChecker::Add failed: {e}"),
+        })?;
+        self.learned.insert(word.to_owned());
+        Ok(())
+    }
+
+    pub fn unlearn(&mut self, word: &str) -> Result<(), Error> {
+        if word.is_empty() {
+            return Ok(());
+        }
+        let checker2: ISpellChecker2 = self.checker.cast().map_err(|e| Error::Io {
+            message: format!("ISpellChecker2 unavailable: {e}"),
+        })?;
+        unsafe { checker2.Remove(&HSTRING::from(word)) }.map_err(|e| Error::Io {
+            message: format!("ISpellChecker2::Remove failed: {e}"),
+        })?;
+        self.learned.remove(word);
+        Ok(())
+    }
+
+    pub fn has_learned(&self, word: &str) -> bool {
+        !word.is_empty() && self.learned.contains(word)
     }
 }
 
