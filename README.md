@@ -129,6 +129,7 @@ Without a dictionary, `Checker::new()` returns `Error::DictionaryNotFound`.
     cargo run --example suggestions -- "I beleeve I can fly"
     cargo run --example locale
     cargo run --example highlight
+    cargo run --example ui_integration
 
 ## Threading
 
@@ -145,6 +146,21 @@ thread_local! {
 ```
 
 Do not move a `Checker` into `std::thread::spawn`, rayon, or async tasks. On macOS, Spellkit also serializes access to the shared `NSSpellChecker`.
+
+If checking on the UI thread is too slow, spawn a **dedicated owning thread**, create the `Checker` **inside** that thread, and exchange `(revision, String)` / `(revision, ranges)` over channels. Drop replies whose `revision` is stale. Do not put `Checker` in a `Mutex` and share it across threads.
+
+## Integrating in a UI
+
+1. Own one `Checker` on the UI thread (`thread_local!` or a field that never crosses threads).
+2. Recreate on locale change. On `DictionaryNotFound` / `UnsupportedLocale` /
+   `InitializationFailed`, soft-disable spellcheck (log and continue).
+3. On text change: `check(&text)` and underline with `err.range()`. For the word under
+   the caret, call `suggest(err.text())` (at most 10 suggestions).
+4. Session ignore: `checker.ignore(word)`. Persist your own ignore list in app config and
+   re-apply after each create. Spellkit does not write a personal dictionary in 0.4.x.
+5. Optional debounce (~100-200 ms) and/or an owning worker thread with a revision token
+   (see Threading). Never send `Checker` across threads.
+6. Worked example: `examples/ui_integration.rs`.
 
 ## Documentation
 
