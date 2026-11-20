@@ -6,6 +6,8 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ## [Unreleased]
 
+## [0.5.0] - 2026-11-20
+
 ### Added
 - `examples/ui_integration.rs` showing UI-thread ownership, soft-fail on missing dictionaries, check/suggest/ignore, and a revision-token sketch
 - `examples/learn.rs` demonstrating persistent learn/unlearn across checker recreate
