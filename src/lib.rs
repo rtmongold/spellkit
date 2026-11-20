@@ -64,6 +64,8 @@ pub enum Error {
         locale: Option<String>,
         message: String,
     },
+    /// Filesystem or backend I/O failed (Linux personal wordlist, Windows Remove QI/Add).
+    Io { message: String },
 }
 
 impl fmt::Display for Error {
@@ -79,6 +81,7 @@ impl fmt::Display for Error {
                 f,
                 "initialization failed for locale: {locale:?}, message: {message}"
             ),
+            Error::Io { message } => write!(f, "io error: {message}"),
         }
     }
 }
@@ -279,10 +282,43 @@ impl Checker {
     /// - **Windows:** this COM checker only.
     ///
     /// Not persisted across process restarts. Not shared with another
-    /// [`Checker`]. For a durable personal dictionary, keep the word list in
-    /// the app, call `ignore` after each create.
+    /// [`Checker`]. For a durable personal dictionary use [`Checker::learn`].
     pub fn ignore(&mut self, word: &str) {
         self.0.ignore(word)
+    }
+
+    /// Add `word` to the persistent user dictionary.
+    ///
+    /// - **macOS:** [`NSSpellChecker::learnWord`] (system learned words).
+    /// - **Windows:** [`ISpellChecker::Add`] (`%AppData%\\Microsoft\\Spelling\\...`).
+    /// - **Linux:** append to the Spellkit personal wordlist and `Hunspell_add`.
+    ///
+    /// Unlike [`Checker::ignore`], this survives process restart (and on macOS/Windows
+    /// may affect other apps using the system checker).
+    pub fn learn(&mut self, word: &str) -> Result<(), Error> {
+        self.0.learn(word)
+    }
+
+    /// Remove `word` from the persistent user dictionary.
+    ///
+    /// - **macOS:** `unlearnWord`
+    /// - **Windows:** `ISpellChecker2::Remove` (fail with [`Error::Io`] if QI fails)
+    /// - **Linux:** remove from personal wordlist + `Hunspell_remove`
+    pub fn unlearn(&mut self, word: &str) -> Result<(), Error> {
+        self.0.unlearn(word)
+    }
+
+    /// Whether `word` is in the persistent user dictionary.
+    ///
+    /// - **macOS:** `hasLearnedWord`
+    /// - **Windows:** best-effort scan of the language's `default.dic` under
+    ///   `%AppData%\Microsoft\Spelling\<tag>\` (UTF-16 LE)
+    /// - **Linux:** membership in the loaded personal wordlist set
+    ///
+    /// Returns `false` for empty `word`. Does not mean "spelled correctly" (base
+    /// dictionary words can be correct without being learned).
+    pub fn has_learned(&self, word: &str) -> bool {
+        self.0.has_learned(word)
     }
 
     /// Language tag this checker is using (Hunspell `en_US` or BCP-47 `en-US`).
@@ -660,5 +696,34 @@ mod tests {
                 .count(),
             0
         );
+    }
+
+    #[test]
+    fn learn_then_has_learned() {
+        let mut checker = Checker::with_locale("en_US").unwrap();
+        let word = "spellkitlearnwordxyz";
+        let _ = checker.unlearn(word);
+        assert!(!checker.has_learned(word));
+        checker.learn(word).unwrap();
+        assert!(checker.has_learned(word));
+
+        // Windows: Add may not affect Check on the same instance; recreate.
+        let locale = checker.locale().to_owned();
+        drop(checker);
+        let mut checker = Checker::with_locale(&locale).unwrap();
+        assert!(checker.has_learned(word));
+        assert_eq!(checker.check(word).count(), 0);
+
+        checker.unlearn(word).unwrap();
+        assert!(!checker.has_learned(word));
+    }
+
+    #[test]
+    fn ignore_is_not_learn() {
+        let mut a = Checker::with_locale("en_US").unwrap();
+        a.ignore("spellkitignoreonlyxyz");
+        drop(a);
+        let b = Checker::with_locale("en_US").unwrap();
+        assert!(!b.has_learned("spellkitignoreonlyxyz"));
     }
 }

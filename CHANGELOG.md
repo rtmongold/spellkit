@@ -8,9 +8,13 @@ This project follows [Semantic Versioning](https://semver.org/).
 
 ### Added
 - `examples/ui_integration.rs` showing UI-thread ownership, soft-fail on missing dictionaries, check/suggest/ignore, and a revision-token sketch
+- `examples/learn.rs` demonstrating persistent learn/unlearn across checker recreate
+- `Checker::learn`, `unlearn`, and `has_learned` for persistent user dictionaries (macOS/Windows OS user dict; Linux XDG personal wordlist)
+- `Error::Io` for personal-wordlist / Windows Add-Remove failures
 
 ### Changed
 - Expanded rustdoc on `check` range guarantees, `ignore` session semantics, and soft-fail guidance for locale/dictionary errors
+- `ignore` docs point to `learn` for durable vocabulary
 
 ## [0.4.2] - 2026-11-17
 

@@ -184,6 +184,32 @@ impl Checker {
         with_checker(|c| c.ignoreWord_inSpellDocumentWithTag(&ns_word, tag));
     }
 
+    pub fn learn(&mut self, word: &str) -> Result<(), Error> {
+        if word.is_empty() {
+            return Ok(());
+        }
+        let ns_word = ns_string(word);
+        with_checker(|c| c.learnWord(&ns_word));
+        Ok(())
+    }
+
+    pub fn unlearn(&mut self, word: &str) -> Result<(), Error> {
+        if word.is_empty() {
+            return Ok(());
+        }
+        let ns_word = ns_string(word);
+        with_checker(|c| c.unlearnWord(&ns_word));
+        Ok(())
+    }
+
+    pub fn has_learned(&self, word: &str) -> bool {
+        if word.is_empty() {
+            return false;
+        }
+        let ns_word = ns_string(word);
+        with_checker(|c| c.hasLearnedWord(&ns_word))
+    }
+
     pub fn check(&self, text: &str) -> impl Iterator<Item = SpellingError> + use<> {
         SpellcheckIter {
             document_tag: self.document_tag,

@@ -17,6 +17,7 @@ unsafe extern "C" {
         word: *const c_char,
     ) -> c_int;
     pub(super) fn Hunspell_add(handle: *mut Hunhandle, word: *const c_char) -> c_int;
+    pub(super) fn Hunspell_remove(handle: *mut Hunhandle, word: *const c_char) -> c_int;
     pub(super) fn Hunspell_free_list(
         handle: *mut Hunhandle,
         list: *mut *mut *mut c_char,
