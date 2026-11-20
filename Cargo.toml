@@ -5,7 +5,7 @@ keywords = ["spellcheck", "spellchecker", "hunspell", "nsspellchecker"]
 categories = ["os", "text-processing"]
 documentation = "https://docs.rs/spellkit"
 repository = "https://github.com/rtmongold/spellkit"
-version = "0.4.2"
+version = "0.5.0"
 authors = [
     "Andy Russell <arussell123@gmail.com>",
     "Robert Mongold <rtmongold@gmail.com>"
